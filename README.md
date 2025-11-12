@@ -2,9 +2,13 @@
 
 ## 🎯 Overview
 
-**Separate project for Slapp's Google Cloud Function**
+**Separate project for Slapp's Google Cloud Functions**
 
-This Cloud Function processes evaluation tasks from the `Slapp` queue, sends them to Gemini AI, and queues results in the `SlappResponses` queue.
+This project contains **TWO Cloud Functions** that work together:
+1. **processEvaluation** - Processes tasks from `Slapp` queue with Gemini AI
+2. **saveEvaluationResults** - Saves results from `SlappResponses` queue to MongoDB
+
+**✨ Fully Serverless - No backend API calls needed for evaluation processing!**
 
 **Related Projects:**
 - Backend: https://github.com/LiveSloka/ajas_backend
@@ -15,43 +19,46 @@ This Cloud Function processes evaluation tasks from the `Slapp` queue, sends the
 ## 📊 Architecture
 
 ```
-┌─────────────┐         ┌──────────────────┐
-│   Frontend  │────────▶│     Backend      │
-└─────────────┘         └──────────────────┘
-                                 │
-                                 │ Prepare payload
-                                 ▼
-                        ┌──────────────────┐
-                        │  Cloud Tasks     │
-                        │  (Slapp queue)   │
-                        └──────────────────┘
-                                 │
-                                 │ HTTP POST
-                                 ▼
-                        ┌──────────────────┐
-                        │  Cloud Function  │◀─ You are here
-                        │  processEvaluation│
-                        └──────────────────┘
-                                 │
-                                 │ Process with Gemini
-                                 ▼
-                        ┌──────────────────┐
-                        │   Gemini API     │
-                        └──────────────────┘
-                                 │
-                                 │ Return results
-                                 ▼
-                        ┌──────────────────┐
-                        │  Cloud Tasks     │
-                        │(SlappResponses)  │
-                        └──────────────────┘
-                                 │
-                                 │ HTTP POST
-                                 ▼
-                        ┌──────────────────┐
-                        │     Backend      │
-                        │  Save to Database│
-                        └──────────────────┘
+Frontend: Click "Evaluate"
+         ↓
+Backend: Queue task
+         ↓
+    ┌──────────────────┐
+    │  Slapp Queue     │ (Cloud Tasks)
+    └──────────────────┘
+         ↓
+    ┌──────────────────────────┐
+    │ Cloud Function #1        │
+    │ processEvaluation        │
+    │ (index.js)               │
+    │ - Receives payload       │
+    │ - Calls Gemini API       │
+    │ - Batches students       │
+    └──────────────────────────┘
+         ↓
+    ┌──────────────────┐
+    │  Gemini API      │
+    └──────────────────┘
+         ↓
+    ┌──────────────────┐
+    │SlappResponses    │ (Cloud Tasks)
+    │Queue             │
+    └──────────────────┘
+         ↓
+    ┌──────────────────────────┐
+    │ Cloud Function #2        │
+    │ saveEvaluationResults    │
+    │ (saveResults.js)         │
+    │ - Receives results       │
+    │ - Saves to MongoDB       │
+    │ - Updates exam status    │
+    └──────────────────────────┘
+         ↓
+    ┌──────────────────┐
+    │ MongoDB Database │
+    └──────────────────┘
+         ↓
+Frontend: Polls & shows results
 ```
 
 ---
@@ -60,10 +67,12 @@ This Cloud Function processes evaluation tasks from the `Slapp` queue, sends the
 
 | File | Description |
 |------|-------------|
-| `index.js` | Main Cloud Function code |
-| `package.json` | Dependencies and scripts |
+| `index.js` | Cloud Function #1 - Process with Gemini |
+| `saveResults.js` | Cloud Function #2 - Save to MongoDB |
+| `package.json` | Dependencies and deployment scripts |
 | `env.yaml.template` | Environment variables template |
-| `DEPLOYMENT_GUIDE.md` | Complete deployment instructions |
+| `DEPLOY_INSTRUCTIONS.md` | **Quick deployment guide** ⭐ |
+| `DEPLOYMENT_GUIDE.md` | Detailed deployment instructions |
 | `README.md` | This file |
 | `.gitignore` | Git ignore rules |
 
@@ -74,38 +83,36 @@ This Cloud Function processes evaluation tasks from the `Slapp` queue, sends the
 ### 1. Create `.env.yaml`
 
 ```bash
+cd "/Users/ram/Enculture Local/Bhargav POCs/Slapp/SlappCloudFunction"
 cp env.yaml.template .env.yaml
 ```
 
 Edit `.env.yaml` with your values:
 ```yaml
 GEMINI_API_KEY: 'AIzaSy...your-key'
+MONGODB_URI: 'mongodb+srv://user:pass@cluster.mongodb.net/slapp_database'
 GCP_PROJECT_ID: 'slapp-478005'
 GCP_LOCATION: 'asia-south1'
 GCP_TASK_RESPONSES_QUEUE: 'SlappResponses'
-BACKEND_SERVICE_URL: 'https://your-backend-url.com'
 ```
 
-### 2. Deploy
+**Important:** Use the **SAME** MongoDB URI as your backend!
+
+### 2. Deploy BOTH Functions
 
 ```bash
-gcloud functions deploy processEvaluation \
-  --gen2 \
-  --runtime=nodejs20 \
-  --region=asia-south1 \
-  --source=. \
-  --entry-point=processEvaluation \
-  --trigger-http \
-  --allow-unauthenticated \
-  --env-vars-file=.env.yaml \
-  --memory=1GB \
-  --timeout=540s \
-  --max-instances=10
+npm run deploy:all
 ```
 
-### 3. Get Function URL
+This deploys:
+- ✅ Cloud Function #1: `processEvaluation` (9 min timeout, 1GB memory)
+- ✅ Cloud Function #2: `saveEvaluationResults` (5 min timeout, 512MB memory)
 
-Copy the URL from deployment output:
+**Wait 10-15 minutes** for deployment to complete.
+
+### 3. Copy Function URL
+
+From deployment output, copy:
 ```
 https://asia-south1-slapp-478005.cloudfunctions.net/processEvaluation
 ```
@@ -116,6 +123,16 @@ Add to Backend `.env`:
 ```env
 CLOUD_FUNCTION_URL=https://asia-south1-slapp-478005.cloudfunctions.net/processEvaluation
 ```
+
+Restart backend:
+```bash
+cd Backend
+npm run dev
+```
+
+### 5. Test
+
+Create an exam in frontend and click "Evaluate" - everything works automatically! 🎉
 
 ---
 

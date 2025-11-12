@@ -429,6 +429,7 @@ function calculateTokenCost(usageMetadata) {
 
 /**
  * Queue response in SlappResponses queue
+ * Cloud Function will call the saveResults Cloud Function
  */
 async function queueResponse(responseData) {
   console.log('\n📨 ============ QUEUING RESPONSE ============');
@@ -437,19 +438,21 @@ async function queueResponse(responseData) {
     const project = process.env.GCP_PROJECT_ID;
     const location = process.env.GCP_LOCATION || 'asia-south1';
     const queue = process.env.GCP_TASK_RESPONSES_QUEUE || 'SlappResponses';
-    const serviceUrl = process.env.BACKEND_SERVICE_URL;
+    
+    // Cloud Function URL for saving results
+    const saveResultsFunctionUrl = process.env.SAVE_RESULTS_FUNCTION_URL || 
+      `https://${location}-${project}.cloudfunctions.net/saveEvaluationResults`;
 
     const parent = tasksClient.queuePath(project, location, queue);
-    const url = `${serviceUrl}/api/tasks/process-response`;
 
     console.log('   Queue:', queue);
-    console.log('   Target URL:', url);
+    console.log('   Target Function:', saveResultsFunctionUrl);
     console.log('   Exam ID:', responseData.examId);
 
     const task = {
       httpRequest: {
         httpMethod: 'POST',
-        url: url,
+        url: saveResultsFunctionUrl,
         headers: {
           'Content-Type': 'application/json',
         },
