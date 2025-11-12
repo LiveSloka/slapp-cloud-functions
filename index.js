@@ -207,7 +207,7 @@ async function generateBatchReportCards(
   referenceDocuments,
   markingScheme
 ) {
-  const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-exp' });
+  const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
   // Prepare file parts for Gemini
   const fileParts = [];
