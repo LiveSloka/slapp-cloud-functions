@@ -2,7 +2,13 @@
 
 ## 📋 Overview
 
+**Separate project for Slapp's Google Cloud Function**
+
 This Cloud Function processes evaluation tasks from the `Slapp` queue, sends them to Gemini, and queues responses in `SlappResponses`.
+
+**Related Projects:**
+- Backend: https://github.com/LiveSloka/ajas_backend
+- Frontend: https://github.com/LiveSloka/ajas_frontend
 
 ---
 
