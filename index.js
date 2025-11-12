@@ -30,17 +30,40 @@ exports.processEvaluation = async (req, res) => {
     // Extract payload from Cloud Tasks request
     const payload = req.body;
     
-    console.log('📦 Payload received:');
-    console.log('   Exam ID:', payload.examId);
-    console.log('   Students:', payload.students?.length || 0);
-    console.log('   Question Paper:', payload.questionPaper?.fileName);
+    console.log('📦 Raw payload received:');
+    console.log(JSON.stringify(payload, null, 2));
+    console.log('\n📋 Payload structure:');
+    console.log('   Exam ID:', payload.examId || '❌ MISSING');
+    console.log('   Tenant ID:', payload.tenantId || '❌ MISSING');
+    console.log('   Students:', payload.students?.length || '❌ MISSING');
+    console.log('   Question Paper:', payload.questionPaper?.fileName || '❌ MISSING');
     console.log('   Marking Scheme:', payload.markingScheme ? 'Yes' : 'No');
+    console.log('   Exam Metadata:', payload.examMetadata ? 'Yes' : 'No');
     console.log('===================================================\n');
 
-    // Validate payload
-    if (!payload.examId || !payload.students || !payload.questionPaper) {
-      throw new Error('Invalid payload: missing required fields');
+    // Validate payload - only require essential fields
+    if (!payload.examId) {
+      console.error('❌ Validation failed: examId missing');
+      throw new Error('Invalid payload: examId is required');
     }
+    
+    if (!payload.students || !Array.isArray(payload.students) || payload.students.length === 0) {
+      console.error('❌ Validation failed: students array missing or empty');
+      throw new Error('Invalid payload: students array is required');
+    }
+    
+    if (!payload.questionPaper || !payload.questionPaper.uri) {
+      console.error('❌ Validation failed: questionPaper missing or no URI');
+      throw new Error('Invalid payload: questionPaper with URI is required');
+    }
+    
+    if (!payload.examMetadata) {
+      console.error('❌ Validation failed: examMetadata missing');
+      throw new Error('Invalid payload: examMetadata is required');
+    }
+    
+    console.log('✅ Payload validation passed');
+    console.log(`   Will process ${payload.students.length} students`);
 
     // Process evaluation with Gemini
     const results = await processWithGemini(payload);
@@ -49,6 +72,8 @@ exports.processEvaluation = async (req, res) => {
     await queueResponse({
       examId: payload.examId,
       tenantId: payload.tenantId,
+      userId: payload.userId,
+      createdBy: payload.createdBy,
       evaluationLevel: payload.examMetadata.evaluationLevel,
       results: results,
       processedAt: new Date().toISOString(),
@@ -65,12 +90,16 @@ exports.processEvaluation = async (req, res) => {
 
   } catch (error) {
     console.error('❌ Error processing evaluation:', error);
+    console.error('   Error stack:', error.stack);
     
     // Queue error response
     try {
       await queueResponse({
         examId: req.body.examId,
         tenantId: req.body.tenantId,
+        userId: req.body.userId,
+        createdBy: req.body.createdBy,
+        evaluationLevel: req.body.examMetadata?.evaluationLevel,
         status: 'error',
         error: error.message,
         processedAt: new Date().toISOString()
@@ -178,7 +207,7 @@ async function generateBatchReportCards(
   referenceDocuments,
   markingScheme
 ) {
-  const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+  const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-exp' });
 
   // Prepare file parts for Gemini
   const fileParts = [];
