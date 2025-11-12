@@ -474,3 +474,344 @@ async function queueResponse(responseData) {
   }
 }
 
+/**
+ * ============================================================
+ * CLOUD FUNCTION #2: Save Evaluation Results to MongoDB
+ * ============================================================
+ * Triggered by SlappResponses queue
+ * Saves evaluation results directly to MongoDB
+ */
+
+const mongoose = require('mongoose');
+
+// MongoDB connection cache
+let cachedDb = null;
+
+async function connectToDatabase() {
+  if (cachedDb && mongoose.connection.readyState === 1) {
+    console.log('   ✅ Using cached database connection');
+    return cachedDb;
+  }
+
+  console.log('   🔌 Connecting to MongoDB...');
+  
+  const MONGODB_URI = process.env.MONGODB_URI;
+  if (!MONGODB_URI) {
+    throw new Error('MONGODB_URI environment variable is not set');
+  }
+
+  await mongoose.connect(MONGODB_URI, {
+    serverSelectionTimeoutMS: 5000,
+    socketTimeoutMS: 45000,
+  });
+
+  cachedDb = mongoose.connection;
+  console.log('   ✅ Connected to MongoDB:', mongoose.connection.name);
+  
+  return cachedDb;
+}
+
+// Mongoose schemas (same as backend)
+const evaluationSchema = new mongoose.Schema({
+  examId: mongoose.Schema.Types.ObjectId,
+  studentId: mongoose.Schema.Types.ObjectId,
+  studentName: String,
+  rollNumber: String,
+  className: String,
+  section: String,
+  subjectName: String,
+  examTypeName: String,
+  evaluationLevel: String,
+  questions: [{
+    questionNumber: String,
+    questionType: String,
+    maxMarks: Number,
+    marksAwarded: Number,
+    reasonForMarksAllocation: String,
+    rubrics: {
+      spellingGrammar: Number,
+      creativity: Number,
+      clarity: Number,
+      depthOfUnderstanding: Number,
+      completeness: Number
+    }
+  }],
+  overallFeedback: String,
+  totalMarksAwarded: Number,
+  totalMaxMarks: Number,
+  percentage: Number,
+  aggregateRubrics: {
+    averageSpellingGrammar: Number,
+    averageCreativity: Number,
+    averageClarity: Number,
+    averageDepthOfUnderstanding: Number,
+    averageCompleteness: Number,
+    overallAverageRubricScore: Number
+  },
+  status: { type: String, default: 'completed' },
+  evaluatedAt: Date,
+  tenantId: String,
+  createdBy: String,
+  updatedBy: String,
+  softDelete: { type: Boolean, default: false }
+}, { timestamps: true });
+
+const examResultSchema = new mongoose.Schema({
+  examId: mongoose.Schema.Types.ObjectId,
+  studentId: mongoose.Schema.Types.ObjectId,
+  studentName: String,
+  rollNumber: String,
+  className: String,
+  section: String,
+  subjectId: mongoose.Schema.Types.ObjectId,
+  subjectName: String,
+  examTypeId: mongoose.Schema.Types.ObjectId,
+  examTypeName: String,
+  examDate: Date,
+  evaluationLevel: String,
+  marksObtained: Number,
+  totalMarks: Number,
+  percentage: Number,
+  grade: String,
+  status: String,
+  tenantId: String,
+  createdBy: String,
+  updatedBy: String,
+  softDelete: { type: Boolean, default: false }
+}, { timestamps: true });
+
+const examSchema = new mongoose.Schema({
+  examTitle: String,
+  className: String,
+  section: String,
+  subjectName: String,
+  examTypeName: String,
+  subjectId: mongoose.Schema.Types.ObjectId,
+  examTypeId: mongoose.Schema.Types.ObjectId,
+  markingSchemeId: mongoose.Schema.Types.ObjectId,
+  studentAnswerSheets: [{
+    studentId: mongoose.Schema.Types.ObjectId,
+    studentName: String,
+    rollNumber: String,
+    answerSheetUri: String,
+    pageCount: Number
+  }],
+  status: String,
+  tokenUsage: {
+    promptTokens: Number,
+    outputTokens: Number,
+    totalTokens: Number,
+    inputCost: Number,
+    outputCost: Number,
+    totalCost: Number
+  },
+  evaluatedLevels: [{
+    level: String,
+    evaluatedAt: Date,
+    tokenUsage: {
+      promptTokens: Number,
+      outputTokens: Number,
+      totalTokens: Number,
+      inputCost: Number,
+      outputCost: Number,
+      totalCost: Number
+    }
+  }],
+  tenantId: String,
+  updatedBy: String,
+  softDelete: Boolean
+}, { timestamps: true });
+
+const examTypeSchema = new mongoose.Schema({
+  passMarks: Number,
+  maximumMarks: Number,
+  tenantId: String,
+  softDelete: Boolean
+}, { timestamps: true });
+
+const markingSchemeSchema = new mongoose.Schema({
+  sections: [{
+    sectionName: String,
+    questions: [{
+      questionNumber: String,
+      marks: Number,
+      description: String
+    }]
+  }],
+  approved: Boolean
+}, { timestamps: true });
+
+// Mongoose models
+const Evaluation = mongoose.models.Evaluation || mongoose.model('Evaluation', evaluationSchema);
+const ExamResult = mongoose.models.ExamResult || mongoose.model('ExamResult', examResultSchema);
+const Exam = mongoose.models.Exam || mongoose.model('Exam', examSchema);
+const ExamType = mongoose.models.ExamType || mongoose.model('ExamType', examTypeSchema);
+const MarkingScheme = mongoose.models.MarkingScheme || mongoose.model('MarkingScheme', markingSchemeSchema);
+
+/**
+ * Cloud Function #2: Save Evaluation Results
+ * Entry point for saving results from SlappResponses queue
+ */
+exports.saveEvaluationResults = async (req, res) => {
+  console.log('\n📨 ============ SAVE RESULTS FUNCTION TRIGGERED ============');
+  console.log('   Timestamp:', new Date().toISOString());
+  
+  try {
+    // Connect to database
+    await connectToDatabase();
+    
+    // Extract response payload
+    const responseData = req.body;
+    
+    console.log('📦 Response Data Received:');
+    console.log('   Exam ID:', responseData.examId);
+    console.log('   Tenant ID:', responseData.tenantId);
+    console.log('   Status:', responseData.status);
+    console.log('   Students:', responseData.results?.students ? Object.keys(responseData.results.students).length : 0);
+    console.log('==========================================================\n');
+
+    // Respond immediately to Cloud Tasks
+    res.status(200).json({
+      success: true,
+      message: 'Results received and saving to database',
+      examId: responseData.examId
+    });
+
+    // Process response
+    if (responseData.status === 'success') {
+      console.log('💾 Saving to MongoDB...\n');
+      await saveResultsToMongoDB(responseData);
+      console.log('\n✅ Saved successfully!\n');
+    } else {
+      console.error('❌ Evaluation failed:', responseData.error);
+      await handleSaveError(responseData);
+    }
+
+  } catch (error) {
+    console.error('❌ Error:', error);
+    
+    if (!res.headersSent) {
+      res.status(200).json({
+        success: false,
+        message: 'Error occurred',
+        error: error.message
+      });
+    }
+  }
+};
+
+async function saveResultsToMongoDB(responseData) {
+  const { examId, tenantId, evaluationLevel, results, createdBy } = responseData;
+
+  const exam = await Exam.findOne({ _id: examId, tenantId, softDelete: false });
+  if (!exam) throw new Error('Exam not found');
+
+  let maxMarksMap = {};
+  if (exam.markingSchemeId) {
+    const markingScheme = await MarkingScheme.findById(exam.markingSchemeId);
+    if (markingScheme?.approved) {
+      markingScheme.sections.forEach(section => {
+        section.questions?.forEach(q => {
+          maxMarksMap[q.questionNumber] = q.marks;
+        });
+      });
+    }
+  }
+
+  const studentsWithAnswers = exam.studentAnswerSheets.filter(s => s.answerSheetUri);
+  let successCount = 0;
+
+  for (const studentSheet of studentsWithAnswers) {
+    const studentId = studentSheet.studentId.toString();
+    const evaluationResult = results.students[studentId];
+
+    if (!evaluationResult?.questions) continue;
+
+    const questionsWithCorrectMaxMarks = evaluationResult.questions.map(q => ({
+      ...q,
+      maxMarks: maxMarksMap[q.questionNumber] || q.maxMarks
+    }));
+
+    const totalMarksAwarded = questionsWithCorrectMaxMarks.reduce((sum, q) => sum + (parseFloat(q.marksAwarded) || 0), 0);
+    const totalMaxMarks = questionsWithCorrectMaxMarks.reduce((sum, q) => sum + (parseFloat(q.maxMarks) || 0), 0);
+    const percentage = totalMaxMarks > 0 ? (totalMarksAwarded / totalMaxMarks) * 100 : 0;
+
+    const aggregateRubrics = {
+      averageSpellingGrammar: evaluationResult.overallRubrics?.spellingGrammar || 0,
+      averageCreativity: evaluationResult.overallRubrics?.creativity || 0,
+      averageClarity: evaluationResult.overallRubrics?.clarity || 0,
+      averageDepthOfUnderstanding: evaluationResult.overallRubrics?.depthOfUnderstanding || 0,
+      averageCompleteness: evaluationResult.overallRubrics?.completeness || 0,
+      overallAverageRubricScore: 0
+    };
+
+    const totalRubricScore = Object.values(aggregateRubrics).slice(0, 5).reduce((a, b) => a + b, 0);
+    aggregateRubrics.overallAverageRubricScore = parseFloat((totalRubricScore / 5).toFixed(2));
+
+    const percentageValue = parseFloat(percentage.toFixed(2));
+    let grade = 'F';
+    if (percentageValue >= 90) grade = 'A+';
+    else if (percentageValue >= 80) grade = 'A';
+    else if (percentageValue >= 70) grade = 'B+';
+    else if (percentageValue >= 60) grade = 'B';
+    else if (percentageValue >= 50) grade = 'C';
+    else if (percentageValue >= 40) grade = 'D';
+
+    const examType = await ExamType.findOne({ _id: exam.examTypeId, tenantId, softDelete: false });
+    const passPercentage = examType ? (examType.passMarks / examType.maximumMarks) * 100 : 40;
+    const status = percentageValue >= passPercentage ? 'pass' : 'fail';
+
+    const createdByValue = createdBy || 'cloud-function';
+
+    await new Evaluation({
+      examId, studentId: studentSheet.studentId, studentName: studentSheet.studentName,
+      rollNumber: studentSheet.rollNumber, className: exam.className, section: exam.section,
+      subjectName: exam.subjectName, examTypeName: exam.examTypeName, evaluationLevel,
+      questions: questionsWithCorrectMaxMarks, overallFeedback: evaluationResult.overallFeedback,
+      totalMarksAwarded, totalMaxMarks, percentage: percentageValue, aggregateRubrics,
+      status: 'completed', evaluatedAt: new Date(), tenantId, createdBy: createdByValue, updatedBy: createdByValue
+    }).save();
+
+    await new ExamResult({
+      examId, studentId: studentSheet.studentId, studentName: studentSheet.studentName,
+      rollNumber: studentSheet.rollNumber, className: exam.className, section: exam.section,
+      subjectId: exam.subjectId, subjectName: exam.subjectName, examTypeId: exam.examTypeId,
+      examTypeName: exam.examTypeName, examDate: exam.examDate, evaluationLevel,
+      marksObtained: totalMarksAwarded, totalMarks: totalMaxMarks, percentage: percentageValue,
+      grade, status, tenantId, createdBy: createdByValue, updatedBy: createdByValue
+    }).save();
+
+    successCount++;
+    console.log(`   ✅ ${studentSheet.studentName}: ${totalMarksAwarded}/${totalMaxMarks} (${percentageValue}%)`);
+  }
+
+  exam.status = 'evaluated';
+  if (results.tokenUsage) {
+    exam.tokenUsage = results.tokenUsage;
+    if (!exam.evaluatedLevels) exam.evaluatedLevels = [];
+    const levelIndex = exam.evaluatedLevels.findIndex(el => el.level === evaluationLevel);
+    if (levelIndex >= 0) {
+      exam.evaluatedLevels[levelIndex] = { level: evaluationLevel, evaluatedAt: new Date(), tokenUsage: results.tokenUsage };
+    } else {
+      exam.evaluatedLevels.push({ level: evaluationLevel, evaluatedAt: new Date(), tokenUsage: results.tokenUsage });
+    }
+  }
+  exam.updatedBy = createdByValue;
+  await exam.save();
+
+  console.log(`   📊 Summary: ${successCount} students saved`);
+}
+
+async function handleSaveError(responseData) {
+  try {
+    const exam = await Exam.findOne({ _id: responseData.examId, tenantId: responseData.tenantId, softDelete: false });
+    if (exam) {
+      exam.status = 'created';
+      exam.updatedBy = 'cloud-function';
+      await exam.save();
+    }
+  } catch (error) {
+    console.error('   Error handling save error:', error);
+  }
+}
+
