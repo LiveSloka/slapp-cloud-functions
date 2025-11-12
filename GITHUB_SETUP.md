@@ -23,7 +23,7 @@ After creating the repository, run these commands:
 cd "/Users/ram/Enculture Local/Bhargav POCs/Slapp/SlappCloudFunction"
 
 # Add remote (replace with your actual repo URL)
-git remote add origin https://YOUR_TOKEN@github.com/livekumon/slapp-cloud-functions.git
+git remote add origin https://YOUR_TOKEN@github.com/LiveSloka/slapp-cloud-functions.git
 
 # Push to GitHub
 git push -u origin main
@@ -31,7 +31,7 @@ git push -u origin main
 
 **Alternative (if you want SSH):**
 ```bash
-git remote add origin git@github.com:livekumon/slapp-cloud-functions.git
+git remote add origin git@github.com:LiveSloka/slapp-cloud-functions.git
 git push -u origin main
 ```
 
@@ -39,7 +39,7 @@ git push -u origin main
 
 ### Step 3: Verify
 
-Go to: https://github.com/livekumon/slapp-cloud-functions
+Go to: https://github.com/LiveSloka/slapp-cloud-functions
 
 You should see:
 - ✅ README.md
@@ -157,10 +157,10 @@ Make sure you're using the correct GitHub token or SSH key:
 
 ```bash
 # Using token
-git remote set-url origin https://YOUR_TOKEN@github.com/livekumon/slapp-cloud-functions.git
+git remote set-url origin https://YOUR_TOKEN@github.com/LiveSloka/slapp-cloud-functions.git
 
 # Using SSH
-git remote set-url origin git@github.com:livekumon/slapp-cloud-functions.git
+git remote set-url origin git@github.com:LiveSloka/slapp-cloud-functions.git
 ```
 
 ### Error: "Updates were rejected"
