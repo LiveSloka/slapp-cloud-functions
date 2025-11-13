@@ -144,97 +144,53 @@ async function retryWithBackoff(fn, maxRetries = 3, initialDelay = 2000) {
 }
 
 /**
- * Process evaluation with Gemini
+ * Process single student evaluation with Vertex AI
  */
 async function processWithGemini(payload) {
   console.log('\n📤 ============ SENDING TO VERTEX AI ============');
   
-  const BATCH_SIZE = 1;  // Process one student at a time for accuracy
-  const totalStudents = payload.students.length;
-  const allStudentsData = {};
-  let aggregatedTokenUsage = {
-    promptTokens: 0,
-    outputTokens: 0,
-    totalTokens: 0,
-    inputCost: 0,
-    outputCost: 0,
-    totalCost: 0
-  };
+  // Since each task contains only 1 student, no batching needed
+  const student = payload.students[0];
+  console.log(`   Processing student: ${student.studentName} (Roll: ${student.rollNumber})`);
 
-  console.log(`   Processing ${totalStudents} student(s) individually (batch size: ${BATCH_SIZE})`);
+  try {
+    // Generate report card with retry logic
+    console.log(`   📤 Calling Vertex AI...`);
+    const result = await retryWithBackoff(() => 
+      generateStudentReportCard(
+        student,
+        payload.examMetadata.subjectName,
+        payload.examMetadata.className,
+        payload.examMetadata.examTypeName,
+        payload.examMetadata.evaluationLevel,
+        payload.markingScheme
+      )
+    );
 
-  // Process students in batches
-  for (let i = 0; i < totalStudents; i += BATCH_SIZE) {
-    const batchNumber = Math.floor(i / BATCH_SIZE) + 1;
-    const totalBatches = Math.ceil(totalStudents / BATCH_SIZE);
-    const studentBatch = payload.students.slice(i, i + BATCH_SIZE);
-    
-    console.log(`\n   📊 Batch ${batchNumber}/${totalBatches}:`);
-    console.log(`      Students: ${studentBatch.map(s => s.studentName).join(', ')}`);
+    console.log(`   ✅ Evaluation complete`);
+    console.log(`   💰 Cost: $${(result.tokenUsage.totalCost || 0).toFixed(6)}`);
+    console.log(`   🎯 Student evaluated: ${student.studentName}`);
+    console.log('============================================\n');
 
-    try {
-      // Generate report card with retry logic
-      console.log(`      📤 Calling Vertex AI (with retry on overload)...`);
-      const batchResults = await retryWithBackoff(() => 
-        generateBatchReportCards(
-          payload.questionPaper,
-          studentBatch,
-          payload.examMetadata.subjectName,
-          payload.examMetadata.className,
-          payload.examMetadata.examTypeName,
-          payload.examMetadata.evaluationLevel,
-          payload.referenceDocuments || [],
-          payload.markingScheme
-        )
-      );
-
-      // Aggregate results
-      const batchStudentsData = batchResults.students || {};
-      const batchTokenUsage = batchResults.tokenUsage || {};
-
-      Object.assign(allStudentsData, batchStudentsData);
-      
-      aggregatedTokenUsage.promptTokens += batchTokenUsage.promptTokens || 0;
-      aggregatedTokenUsage.outputTokens += batchTokenUsage.outputTokens || 0;
-      aggregatedTokenUsage.totalTokens += batchTokenUsage.totalTokens || 0;
-      aggregatedTokenUsage.inputCost += batchTokenUsage.inputCost || 0;
-      aggregatedTokenUsage.outputCost += batchTokenUsage.outputCost || 0;
-      aggregatedTokenUsage.totalCost += batchTokenUsage.totalCost || 0;
-
-      console.log(`      ✅ Batch complete - Cost: $${(batchTokenUsage.totalCost || 0).toFixed(6)}`);
-      
-      // Delay between batches
-      if (i + BATCH_SIZE < totalStudents) {
-        await new Promise(resolve => setTimeout(resolve, 1000));
-      }
-    } catch (error) {
-      console.error(`      ❌ Batch ${batchNumber} failed:`, error.message);
-      throw error;
-    }
+    return {
+      students: result.students,
+      tokenUsage: result.tokenUsage
+    };
+  } catch (error) {
+    console.error(`   ❌ Evaluation failed:`, error.message);
+    throw error;
   }
-
-  console.log('\n   ✅ All batches completed');
-  console.log(`   💰 Total cost: $${aggregatedTokenUsage.totalCost.toFixed(6)}`);
-  console.log(`   🎯 Students evaluated: ${Object.keys(allStudentsData).length}/${totalStudents}`);
-  console.log('============================================\n');
-
-  return {
-    students: allStudentsData,
-    tokenUsage: aggregatedTokenUsage
-  };
 }
 
 /**
- * Generate batch report cards using Gemini
+ * Generate report card for a single student using Vertex AI
  */
-async function generateBatchReportCards(
-  questionPaper,
-  studentAnswers,
+async function generateStudentReportCard(
+  student,
   subjectName,
   className,
   examTypeName,
   evaluationLevel,
-  referenceDocuments,
   markingScheme
 ) {
   // Get Gemini 2.5 Flash model from Vertex AI
@@ -242,25 +198,17 @@ async function generateBatchReportCards(
     model: 'gemini-2.5-flash',
   });
 
-  // Prepare file parts for Vertex AI
-  const fileParts = [];
+  // Prepare file parts for Vertex AI - ONLY student answer sheet
+  const fileParts = [{
+    fileData: {
+      fileUri: student.answerSheetUri || student.uri,
+      mimeType: student.mimeType || 'application/pdf'
+    }
+  }];
 
-  // OPTIMIZATION: Question paper NOT included - marking scheme in prompt has all questions
-  // OPTIMIZATION: Reference documents NOT included - reduces token usage
-  
-  // Add only student answer sheet(s)
-  studentAnswers.forEach(student => {
-    fileParts.push({
-      fileData: {
-        fileUri: student.answerSheetUri || student.uri,
-        mimeType: student.mimeType
-      }
-    });
-  });
-
-  // Build prompt
+  // Build optimized prompt for single student
   const prompt = buildEvaluationPrompt(
-    studentAnswers,
+    [student],  // Pass as array for compatibility
     subjectName,
     className,
     examTypeName,
@@ -268,10 +216,10 @@ async function generateBatchReportCards(
     markingScheme
   );
 
-  console.log('      📝 Prompt length:', prompt.length, 'characters');
-  console.log('      📎 Files attached:', fileParts.length);
+  console.log('   📝 Prompt length:', prompt.length, 'characters');
+  console.log('   📎 Files attached:', fileParts.length, '(student answer sheet only)');
 
-  // Call Vertex AI (Gemini)
+  // Call Vertex AI
   const startTime = Date.now();
   const request = {
     contents: [
@@ -288,7 +236,7 @@ async function generateBatchReportCards(
   const result = await generativeModel.generateContent(request);
   const responseTime = Date.now() - startTime;
 
-  console.log('      ⏱️  Response time:', responseTime, 'ms');
+  console.log('   ⏱️  Response time:', responseTime, 'ms');
 
   const response = result.response;
   const text = response.candidates[0].content.parts[0].text;
@@ -307,18 +255,13 @@ async function generateBatchReportCards(
   const usageMetadata = response.usageMetadata || {};
   const tokenUsage = calculateTokenCost(usageMetadata);
 
-  // Organize results by student
+  // Organize results by student ID
   const studentsData = {};
-  studentAnswers.forEach(student => {
-    const studentResult = evaluationData.students?.find(s => 
-      s.studentName === student.studentName || 
-      s.rollNumber === student.rollNumber
-    );
-    
-    if (studentResult) {
-      studentsData[student.studentId] = studentResult;
-    }
-  });
+  const studentResult = evaluationData.students?.[0];
+  
+  if (studentResult) {
+    studentsData[student.studentId] = studentResult;
+  }
 
   return {
     students: studentsData,
