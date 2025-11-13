@@ -69,26 +69,30 @@ exports.processEvaluation = async (req, res) => {
     console.log('✅ Payload validation passed');
     console.log(`   Will process ${payload.students.length} students`);
 
-    // Process evaluation with Gemini
+    // Connect to MongoDB
+    await connectToDatabase();
+
+    // Process evaluation with Vertex AI
     const results = await processWithGemini(payload);
 
-    // Queue response in SlappResponses queue
-    await queueResponse({
+    // Save results directly to MongoDB (no second queue needed!)
+    console.log('\n💾 ============ SAVING TO MONGODB ============');
+    await saveResultsToMongoDB({
       examId: payload.examId,
       tenantId: payload.tenantId,
-      userId: payload.userId,
-      createdBy: payload.createdBy,
       evaluationLevel: payload.examMetadata.evaluationLevel,
       results: results,
-      processedAt: new Date().toISOString(),
-      status: 'success'
+      createdBy: payload.createdBy
     });
+    console.log('✅ Results saved to MongoDB successfully');
+    console.log('============================================\n');
 
     // Respond to Cloud Tasks
     res.status(200).json({
       success: true,
-      message: 'Evaluation completed and queued in response queue',
+      message: 'Evaluation completed and saved to database',
       examId: payload.examId,
+      studentName: payload.student?.studentName,
       studentsProcessed: results.students ? Object.keys(results.students).length : 0
     });
 
@@ -96,26 +100,24 @@ exports.processEvaluation = async (req, res) => {
     console.error('❌ Error processing evaluation:', error);
     console.error('   Error stack:', error.stack);
     
-    // Queue error response
+    // Save error status to MongoDB
     try {
-      await queueResponse({
+      await connectToDatabase();
+      await handleSaveError({
         examId: req.body.examId,
         tenantId: req.body.tenantId,
-        userId: req.body.userId,
-        createdBy: req.body.createdBy,
-        evaluationLevel: req.body.examMetadata?.evaluationLevel,
-        status: 'error',
-        error: error.message,
-        processedAt: new Date().toISOString()
+        error: error.message
       });
-    } catch (queueError) {
-      console.error('❌ Failed to queue error response:', queueError);
+    } catch (dbError) {
+      console.error('❌ Failed to update exam status:', dbError);
     }
 
-    res.status(500).json({
+    res.status(200).json({  // Return 200 to acknowledge task (not 500 which retries)
       success: false,
       message: 'Evaluation failed',
-      error: error.message
+      error: error.message,
+      examId: req.body.examId,
+      studentName: req.body.student?.studentName
     });
   }
 };
@@ -380,58 +382,9 @@ function calculateTokenCost(usageMetadata) {
 }
 
 /**
- * Queue response in SlappResponses queue
- * Cloud Function will call the saveResults Cloud Function
- */
-async function queueResponse(responseData) {
-  console.log('\n📨 ============ QUEUING RESPONSE ============');
-  
-  try {
-    const project = process.env.GCP_PROJECT_ID;
-    const location = process.env.GCP_LOCATION || 'asia-south1';
-    const queue = process.env.GCP_TASK_RESPONSES_QUEUE || 'SlappResponses';
-    
-    // Cloud Function URL for saving results
-    const saveResultsFunctionUrl = process.env.SAVE_RESULTS_FUNCTION_URL || 
-      `https://${location}-${project}.cloudfunctions.net/saveEvaluationResults`;
-
-    const parent = tasksClient.queuePath(project, location, queue);
-
-    console.log('   Queue:', queue);
-    console.log('   Target Function:', saveResultsFunctionUrl);
-    console.log('   Exam ID:', responseData.examId);
-
-    const task = {
-      httpRequest: {
-        httpMethod: 'POST',
-        url: saveResultsFunctionUrl,
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: Buffer.from(JSON.stringify(responseData)).toString('base64'),
-      },
-    };
-
-    const request = { parent, task };
-    const [response] = await tasksClient.createTask(request);
-
-    console.log('   ✅ Response queued successfully');
-    console.log('   Task ID:', response.name.split('/').pop());
-    console.log('============================================\n');
-
-    return response;
-  } catch (error) {
-    console.error('❌ Failed to queue response:', error);
-    throw error;
-  }
-}
-
-/**
  * ============================================================
- * CLOUD FUNCTION #2: Save Evaluation Results to MongoDB
+ * MONGODB CONNECTION AND MODELS
  * ============================================================
- * Triggered by SlappResponses queue
- * Saves evaluation results directly to MongoDB
  */
 
 const mongoose = require('mongoose');
@@ -601,56 +554,10 @@ const ExamType = mongoose.models.ExamType || mongoose.model('ExamType', examType
 const MarkingScheme = mongoose.models.MarkingScheme || mongoose.model('MarkingScheme', markingSchemeSchema);
 
 /**
- * Cloud Function #2: Save Evaluation Results
- * Entry point for saving results from SlappResponses queue
+ * ============================================================
+ * MONGODB SAVE FUNCTIONS (Called directly from processEvaluation)
+ * ============================================================
  */
-exports.saveEvaluationResults = async (req, res) => {
-  console.log('\n📨 ============ SAVE RESULTS FUNCTION TRIGGERED ============');
-  console.log('   Timestamp:', new Date().toISOString());
-  
-  try {
-    // Connect to database
-    await connectToDatabase();
-    
-    // Extract response payload
-    const responseData = req.body;
-    
-    console.log('📦 Response Data Received:');
-    console.log('   Exam ID:', responseData.examId);
-    console.log('   Tenant ID:', responseData.tenantId);
-    console.log('   Status:', responseData.status);
-    console.log('   Students:', responseData.results?.students ? Object.keys(responseData.results.students).length : 0);
-    console.log('==========================================================\n');
-
-    // Respond immediately to Cloud Tasks
-    res.status(200).json({
-      success: true,
-      message: 'Results received and saving to database',
-      examId: responseData.examId
-    });
-
-    // Process response
-    if (responseData.status === 'success') {
-      console.log('💾 Saving to MongoDB...\n');
-      await saveResultsToMongoDB(responseData);
-      console.log('\n✅ Saved successfully!\n');
-    } else {
-      console.error('❌ Evaluation failed:', responseData.error);
-      await handleSaveError(responseData);
-    }
-
-  } catch (error) {
-    console.error('❌ Error:', error);
-    
-    if (!res.headersSent) {
-      res.status(200).json({
-        success: false,
-        message: 'Error occurred',
-        error: error.message
-      });
-    }
-  }
-};
 
 async function saveResultsToMongoDB(responseData) {
   const { examId, tenantId, evaluationLevel, results, createdBy } = responseData;
@@ -755,16 +662,17 @@ async function saveResultsToMongoDB(responseData) {
   console.log(`   📊 Summary: ${successCount} students saved`);
 }
 
-async function handleSaveError(responseData) {
+async function handleSaveError(errorData) {
   try {
-    const exam = await Exam.findOne({ _id: responseData.examId, tenantId: responseData.tenantId, softDelete: false });
+    const exam = await Exam.findOne({ _id: errorData.examId, tenantId: errorData.tenantId, softDelete: false });
     if (exam) {
-      exam.status = 'created';
+      exam.status = 'created';  // Reset to created status on error
       exam.updatedBy = 'cloud-function';
       await exam.save();
+      console.log(`   ✅ Exam status reset to 'created' due to error`);
     }
   } catch (error) {
-    console.error('   Error handling save error:', error);
+    console.error('   ❌ Error handling save error:', error);
   }
 }
 

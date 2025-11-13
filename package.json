@@ -4,11 +4,9 @@
   "description": "Google Cloud Functions for Slapp evaluation processing with Gemini and MongoDB",
   "main": "index.js",
   "scripts": {
-    "deploy:process": "gcloud functions deploy processEvaluation --gen2 --runtime nodejs20 --trigger-http --allow-unauthenticated --region asia-south1 --memory 1GB --timeout 540s --env-vars-file=.env.yaml --project=slapp-478005",
-    "deploy:save": "gcloud functions deploy saveEvaluationResults --gen2 --runtime nodejs20 --trigger-http --allow-unauthenticated --region asia-south1 --memory 512MB --timeout 300s --env-vars-file=.env.yaml --project=slapp-478005 --entry-point=saveEvaluationResults --source=.",
-    "deploy:all": "npm run deploy:process && npm run deploy:save",
-    "logs:process": "gcloud functions logs read processEvaluation --region=asia-south1 --project=slapp-478005 --limit=100",
-    "logs:save": "gcloud functions logs read saveEvaluationResults --region=asia-south1 --project=slapp-478005 --limit=100"
+    "deploy": "gcloud functions deploy processEvaluation --gen2 --runtime nodejs20 --trigger-http --allow-unauthenticated --region asia-south1 --memory 1GB --timeout 540s --env-vars-file=.env.yaml --project=slapp-478005",
+    "logs": "gcloud functions logs read processEvaluation --region=asia-south1 --project=slapp-478005 --limit=100",
+    "logs:follow": "gcloud functions logs read processEvaluation --region=asia-south1 --project=slapp-478005 --follow"
   },
   "dependencies": {
     "@google-cloud/functions-framework": "^3.3.0",
