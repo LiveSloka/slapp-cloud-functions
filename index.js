@@ -568,15 +568,20 @@ async function saveResultsToMongoDB(responseData) {
   const exam = await Exam.findOne({ _id: examId, tenantId, softDelete: false });
   if (!exam) throw new Error('Exam not found');
 
+  // Build max marks mapping from approved marking scheme
   let maxMarksMap = {};
+  let schemeTotalMarks = null;
+  
   if (exam.markingSchemeId) {
     const markingScheme = await MarkingScheme.findById(exam.markingSchemeId);
     if (markingScheme?.approved) {
+      schemeTotalMarks = markingScheme.totalMarks;  // Store the official total
       markingScheme.sections.forEach(section => {
         section.questions?.forEach(q => {
           maxMarksMap[q.questionNumber] = q.marks;
         });
       });
+      console.log(`   📋 Using marking scheme total marks: ${schemeTotalMarks}`);
     }
   }
 
@@ -589,14 +594,21 @@ async function saveResultsToMongoDB(responseData) {
 
     if (!evaluationResult?.questions) continue;
 
+    // ALWAYS use marking scheme max marks (override AI's values completely)
     const questionsWithCorrectMaxMarks = evaluationResult.questions.map(q => ({
       ...q,
       maxMarks: maxMarksMap[q.questionNumber] || q.maxMarks
     }));
 
     const totalMarksAwarded = questionsWithCorrectMaxMarks.reduce((sum, q) => sum + (parseFloat(q.marksAwarded) || 0), 0);
-    const totalMaxMarks = questionsWithCorrectMaxMarks.reduce((sum, q) => sum + (parseFloat(q.maxMarks) || 0), 0);
+    
+    // Use marking scheme total if available, otherwise calculate from questions
+    const totalMaxMarks = schemeTotalMarks || questionsWithCorrectMaxMarks.reduce((sum, q) => sum + (parseFloat(q.maxMarks) || 0), 0);
+    
     const percentage = totalMaxMarks > 0 ? (totalMarksAwarded / totalMaxMarks) * 100 : 0;
+    
+    console.log(`   📊 ${studentSheet.studentName}: ${totalMarksAwarded}/${totalMaxMarks} (${percentage.toFixed(2)}%)`);
+    console.log(`      Source: ${schemeTotalMarks ? 'Marking Scheme' : 'Calculated from AI response'}`);
 
     const aggregateRubrics = {
       averageSpellingGrammar: evaluationResult.overallRubrics?.spellingGrammar || 0,
