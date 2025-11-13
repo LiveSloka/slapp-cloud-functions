@@ -13,11 +13,13 @@
   "dependencies": {
     "@google-cloud/functions-framework": "^3.3.0",
     "@google-cloud/tasks": "^6.2.1",
-    "@google/generative-ai": "^0.21.0",
+    "@google-cloud/vertexai": "^1.9.0",
     "mongoose": "^8.0.0"
   },
   "engines": {
     "node": ">=20"
+  },
+  "devDependencies": {
+    "js-yaml": "^4.1.1"
   }
 }
-

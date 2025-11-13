@@ -3,17 +3,18 @@
  * 
  * This function is triggered by Cloud Tasks (Slapp queue)
  * - Receives complete evaluation payload
- * - Sends to Gemini for processing
+ * - Sends to Vertex AI (Gemini) for processing
  * - Queues response in SlappResponses queue
  */
 
-const { GoogleGenerativeAI } = require('@google/generative-ai');
-const { GoogleAIFileManager } = require('@google/generative-ai/server');
+const { VertexAI } = require('@google-cloud/vertexai');
 const { CloudTasksClient } = require('@google-cloud/tasks');
 
-// Initialize Gemini
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const fileManager = new GoogleAIFileManager(process.env.GEMINI_API_KEY);
+// Initialize Vertex AI
+const vertexAI = new VertexAI({
+  project: process.env.GCP_PROJECT_ID || 'slapp-478005',
+  location: process.env.GCP_LOCATION || 'asia-south1'
+});
 
 // Initialize Cloud Tasks for response queue
 const tasksClient = new CloudTasksClient();
@@ -233,9 +234,12 @@ async function generateBatchReportCards(
   referenceDocuments,
   markingScheme
 ) {
-  const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash-lite' });
+  // Get Gemini 2.5 Flash model from Vertex AI
+  const generativeModel = vertexAI.getGenerativeModel({
+    model: 'gemini-2.5-flash',
+  });
 
-  // Prepare file parts for Gemini
+  // Prepare file parts for Vertex AI
   const fileParts = [];
 
   // Add question paper
@@ -281,15 +285,27 @@ async function generateBatchReportCards(
   console.log('      📝 Prompt length:', prompt.length, 'characters');
   console.log('      📎 Files attached:', fileParts.length);
 
-  // Call Gemini
+  // Call Vertex AI (Gemini)
   const startTime = Date.now();
-  const result = await model.generateContent([prompt, ...fileParts]);
+  const request = {
+    contents: [
+      {
+        role: 'user',
+        parts: [
+          { text: prompt },
+          ...fileParts
+        ]
+      }
+    ],
+  };
+  
+  const result = await generativeModel.generateContent(request);
   const responseTime = Date.now() - startTime;
 
   console.log('      ⏱️  Response time:', responseTime, 'ms');
 
   const response = result.response;
-  const text = response.text();
+  const text = response.candidates[0].content.parts[0].text;
 
   // Parse JSON response
   const jsonMatch = text.match(/```json\n([\s\S]*?)\n```/) || text.match(/```\n([\s\S]*?)\n```/);
@@ -301,7 +317,7 @@ async function generateBatchReportCards(
     evaluationData = JSON.parse(text);
   }
 
-  // Extract token usage
+  // Extract token usage from Vertex AI response
   const usageMetadata = response.usageMetadata || {};
   const tokenUsage = calculateTokenCost(usageMetadata);
 
@@ -464,7 +480,7 @@ function calculateTokenCost(usageMetadata) {
   const outputTokens = usageMetadata.candidatesTokenCount || 0;
   const totalTokens = usageMetadata.totalTokenCount || promptTokens + outputTokens;
 
-  // Gemini 1.5 Flash pricing (as of 2024)
+  // Gemini 2.5 Flash pricing via Vertex AI
   const INPUT_COST_PER_1M = 0.075;   // $0.075 per 1M input tokens
   const OUTPUT_COST_PER_1M = 0.30;   // $0.30 per 1M output tokens
 
