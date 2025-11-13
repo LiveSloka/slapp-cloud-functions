@@ -10,10 +10,10 @@
 const { VertexAI } = require('@google-cloud/vertexai');
 const { CloudTasksClient } = require('@google-cloud/tasks');
 
-// Initialize Vertex AI
+// Initialize Vertex AI - use us-central1 for Gemini models
 const vertexAI = new VertexAI({
   project: process.env.GCP_PROJECT_ID || 'slapp-478005',
-  location: process.env.GCP_LOCATION || 'asia-south1'
+  location: 'us-central1'  // Gemini models are available in us-central1
 });
 
 // Initialize Cloud Tasks for response queue
@@ -234,9 +234,9 @@ async function generateBatchReportCards(
   referenceDocuments,
   markingScheme
 ) {
-  // Get Gemini 2.5 Flash model from Vertex AI
+  // Get Gemini 1.5 Flash model from Vertex AI
   const generativeModel = vertexAI.getGenerativeModel({
-    model: 'gemini-2.5-flash',
+    model: 'gemini-1.5-flash',
   });
 
   // Prepare file parts for Vertex AI
