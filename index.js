@@ -373,14 +373,7 @@ Evaluate the attached answer sheet. ${evalCriteria} Use exact max marks above.
           "questionType": "Type",
           "maxMarks": 10,
           "marksAwarded": 8,
-          "reasonForMarksAllocation": "Brief reason for marks given",
-          "rubrics": {
-            "spellingGrammar": 8,
-            "creativity": 7,
-            "clarity": 9,
-            "depthOfUnderstanding": 8,
-            "completeness": 8
-          }
+          "reasonForMarksAllocation": "Brief reason for marks given"
         }
       ],
       "overallRubrics": {
@@ -398,9 +391,9 @@ Evaluate the attached answer sheet. ${evalCriteria} Use exact max marks above.
 
 **Requirements:**
 - Use exact max marks listed above
-- Evaluate all questions
-- Rubrics: 0-10 scale for spellingGrammar, creativity, clarity, depthOfUnderstanding, completeness
-- Return valid JSON only (students array with single student object)`;
+- Evaluate all questions with marks and brief reason
+- Overall rubrics only: 0-10 scale for spellingGrammar, creativity, clarity, depthOfUnderstanding, completeness (averaged across entire answer sheet)
+- Return valid JSON only`;
 }
 
 /**
