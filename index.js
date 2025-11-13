@@ -147,9 +147,9 @@ async function retryWithBackoff(fn, maxRetries = 3, initialDelay = 2000) {
  * Process evaluation with Gemini
  */
 async function processWithGemini(payload) {
-  console.log('\n📤 ============ SENDING TO GEMINI ============');
+  console.log('\n📤 ============ SENDING TO VERTEX AI ============');
   
-  const BATCH_SIZE = 2;
+  const BATCH_SIZE = 1;  // Process one student at a time for accuracy
   const totalStudents = payload.students.length;
   const allStudentsData = {};
   let aggregatedTokenUsage = {
@@ -161,7 +161,7 @@ async function processWithGemini(payload) {
     totalCost: 0
   };
 
-  console.log(`   Processing ${totalStudents} students in batches of ${BATCH_SIZE}`);
+  console.log(`   Processing ${totalStudents} student(s) individually (batch size: ${BATCH_SIZE})`);
 
   // Process students in batches
   for (let i = 0; i < totalStudents; i += BATCH_SIZE) {
@@ -173,8 +173,8 @@ async function processWithGemini(payload) {
     console.log(`      Students: ${studentBatch.map(s => s.studentName).join(', ')}`);
 
     try {
-      // Generate batch report cards with retry logic
-      console.log(`      📤 Calling Gemini API (with retry on overload)...`);
+      // Generate report card with retry logic
+      console.log(`      📤 Calling Vertex AI (with retry on overload)...`);
       const batchResults = await retryWithBackoff(() => 
         generateBatchReportCards(
           payload.questionPaper,
@@ -245,27 +245,10 @@ async function generateBatchReportCards(
   // Prepare file parts for Vertex AI
   const fileParts = [];
 
-  // Add question paper
-  fileParts.push({
-    fileData: {
-      fileUri: questionPaper.uri,
-      mimeType: questionPaper.mimeType
-    }
-  });
-
-  // Add reference documents
-  if (referenceDocuments && referenceDocuments.length > 0) {
-    referenceDocuments.forEach(doc => {
-      fileParts.push({
-        fileData: {
-          fileUri: doc.uri,
-          mimeType: doc.mimeType
-        }
-      });
-    });
-  }
-
-  // Add student answer sheets
+  // OPTIMIZATION: Question paper NOT included - marking scheme in prompt has all questions
+  // OPTIMIZATION: Reference documents NOT included - reduces token usage
+  
+  // Add only student answer sheet(s)
   studentAnswers.forEach(student => {
     fileParts.push({
       fileData: {
@@ -345,75 +328,58 @@ async function generateBatchReportCards(
 }
 
 /**
- * Build evaluation prompt for Gemini
+ * Build optimized evaluation prompt (token-efficient)
  */
 function buildEvaluationPrompt(studentAnswers, subjectName, className, examTypeName, evaluationLevel, markingScheme) {
-  const studentList = studentAnswers.map((s, i) => 
-    `${i + 1}. ${s.studentName} (Roll: ${s.rollNumber})`
-  ).join('\n');
-
-  let markingSchemeSection = '';
+  // Single student (batch size = 1)
+  const student = studentAnswers[0];
+  
+  // Build compact marking scheme section
+  let questionsSection = '';
   if (markingScheme && markingScheme.approved) {
-    markingSchemeSection = `
-
-## 📋 MARKING SCHEME (USE THESE EXACT MARKS)
-
-**Total Marks: ${markingScheme.totalMarks}**
-
-${markingScheme.sections.map(section => `
-### ${section.sectionName}
-${section.questions.map(q => 
-  `- **Question ${q.questionNumber}**: ${q.marks} marks${q.description ? ` - ${q.description}` : ''}`
-).join('\n')}
-`).join('\n')}
-
-⚠️ **IMPORTANT**: Use the EXACT maximum marks from the marking scheme above. Do NOT estimate or guess marks.
-`;
+    questionsSection = `## Questions & Marks\n\n${markingScheme.sections.map(section => 
+      `**${section.sectionName}** (${section.sectionTotalMarks}m)\n${section.questions.map(q => 
+        `Q${q.questionNumber}: ${q.questionText || q.questionType} [${q.marks}m]`
+      ).join('\n')}`
+    ).join('\n\n')}\n\n**Total: ${markingScheme.totalMarks} marks**`;
+  } else {
+    questionsSection = `## Questions\n\nEvaluate all questions in the answer sheet. Determine appropriate maximum marks for each question.`;
   }
 
-  const evaluationInstructions = getEvaluationInstructions(evaluationLevel);
+  // Compact evaluation criteria
+  const evalCriteria = getEvaluationInstructions(evaluationLevel);
 
-  return `You are an expert ${subjectName} teacher evaluating ${className} students' ${examTypeName} exam answer sheets.
+  return `Evaluate this ${className} ${subjectName} ${examTypeName} answer sheet using ${evaluationLevel} criteria.
 
-## 📚 DOCUMENTS PROVIDED
+**Student:** ${student.studentName} (Roll: ${student.rollNumber})
 
-1. **Question Paper** (First document)
-2. **Reference Documents** (If any)
-3. **Student Answer Sheets** (One for each student below)
+${questionsSection}
 
-## 👥 STUDENTS TO EVALUATE
+## Task
 
-${studentList}
+Evaluate the attached answer sheet. ${evalCriteria} Use exact max marks above.
 
-${markingSchemeSection}
-
-## 📊 EVALUATION CRITERIA
-
-${evaluationInstructions}
-
-## 📝 RESPONSE FORMAT
-
-Return a JSON object in this EXACT format:
+## Output (JSON only, no other text)
 
 \`\`\`json
 {
   "students": [
     {
-      "studentName": "Student Name",
-      "rollNumber": "Roll Number",
+      "studentName": "${student.studentName}",
+      "rollNumber": "${student.rollNumber}",
       "questions": [
         {
           "questionNumber": "1",
-          "questionType": "MCQ/Short Answer/Essay/etc",
-          "maxMarks": 5,
-          "marksAwarded": 4,
-          "reasonForMarksAllocation": "Detailed reason",
+          "questionType": "Type",
+          "maxMarks": 10,
+          "marksAwarded": 8,
+          "reasonForMarksAllocation": "Brief reason for marks given",
           "rubrics": {
             "spellingGrammar": 8,
             "creativity": 7,
             "clarity": 9,
             "depthOfUnderstanding": 8,
-            "completeness": 7
+            "completeness": 8
           }
         }
       ],
@@ -422,54 +388,30 @@ Return a JSON object in this EXACT format:
         "creativity": 7,
         "clarity": 9,
         "depthOfUnderstanding": 8,
-        "completeness": 7
+        "completeness": 8
       },
-      "overallFeedback": "Comprehensive feedback for the student"
+      "overallFeedback": "Overall performance summary (100-150 words)"
     }
   ]
 }
 \`\`\`
 
-## ⚠️ CRITICAL REQUIREMENTS
-
-1. **Use EXACT marks from marking scheme** (if provided)
-2. **Evaluate ALL students** listed above
-3. **Return ONLY valid JSON** (no extra text)
-4. **Include all rubric scores** (0-10 scale)
-5. **Provide detailed feedback** for each question
-6. **Overall rubrics** should be averaged across all questions
-
-Analyze the documents and return the evaluation results now.`;
+**Requirements:**
+- Use exact max marks listed above
+- Evaluate all questions
+- Rubrics: 0-10 scale for spellingGrammar, creativity, clarity, depthOfUnderstanding, completeness
+- Return valid JSON only (students array with single student object)`;
 }
 
 /**
- * Get evaluation instructions based on level
+ * Get compact evaluation instructions based on level
  */
 function getEvaluationInstructions(level) {
   const instructions = {
-    'lenient': `
-- Be generous with partial marks
-- Focus on effort and attempt
-- Encourage student learning
-- Award marks for any correct elements`,
-    
-    'standard': `
-- Follow standard evaluation practices
-- Award marks fairly based on correctness
-- Consider partial understanding
-- Balance strictness with fairness`,
-    
-    'strict': `
-- Evaluate with high standards
-- Require complete and accurate answers
-- Minimal partial marks
-- Focus on precision and completeness`,
-    
-    'very_strict': `
-- Apply maximum rigor
-- Expect excellence in every aspect
-- No marks for incomplete answers
-- Demand perfect accuracy and presentation`
+    'lenient': 'Award marks generously. Give partial marks for effort and attempt.',
+    'standard': 'Award marks fairly based on correctness. Consider partial understanding.',
+    'strict': 'Evaluate with high standards. Require complete and accurate answers.',
+    'very_strict': 'Apply maximum rigor. Expect excellence. No marks for incomplete answers.'
   };
 
   return instructions[level] || instructions['standard'];
