@@ -7,24 +7,15 @@
  * - Queues response in SlappResponses queue
  */
 
-const { VertexAI, HarmCategory, HarmBlockThreshold } = require('@google-cloud/vertexai');
+const { VertexAI } = require('@google-cloud/vertexai');
 const { CloudTasksClient } = require('@google-cloud/tasks');
-const { GoogleAuth } = require('google-auth-library');
 
-// Initialize Vertex AI with explicit authentication
-let vertexAI;
-async function initializeVertexAI() {
-  if (!vertexAI) {
-    vertexAI = new VertexAI({
-      project: process.env.GCP_PROJECT_ID || 'slapp-478005',
-      location: 'us-central1',
-      googleAuth: new GoogleAuth({
-        scopes: ['https://www.googleapis.com/auth/cloud-platform']
-      })
-    });
-  }
-  return vertexAI;
-}
+// Initialize Vertex AI - it will automatically use Application Default Credentials
+// from the Cloud Function's service account via the metadata server
+const vertexAI = new VertexAI({
+  project: process.env.GCP_PROJECT_ID || 'slapp-478005',
+  location: 'us-central1'
+});
 
 // Initialize Cloud Tasks for response queue
 const tasksClient = new CloudTasksClient();
@@ -36,6 +27,8 @@ const tasksClient = new CloudTasksClient();
 exports.processEvaluation = async (req, res) => {
   console.log('\n🚀 ============ CLOUD FUNCTION TRIGGERED ============');
   console.log('   Timestamp:', new Date().toISOString());
+  console.log('   Project:', process.env.GCP_PROJECT_ID);
+  console.log('   Service Account:', process.env.K_SERVICE);
   
   try {
     // Extract payload from Cloud Tasks request
@@ -244,9 +237,8 @@ async function generateBatchReportCards(
   referenceDocuments,
   markingScheme
 ) {
-  // Initialize Vertex AI and get Gemini 2.5 Flash model
-  const vertex = await initializeVertexAI();
-  const generativeModel = vertex.getGenerativeModel({
+  // Get Gemini 2.5 Flash model from Vertex AI
+  const generativeModel = vertexAI.getGenerativeModel({
     model: 'gemini-2.5-flash',
   });
 
