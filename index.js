@@ -234,9 +234,9 @@ async function generateBatchReportCards(
   referenceDocuments,
   markingScheme
 ) {
-  // Get Gemini 1.5 Flash model from Vertex AI
+  // Get Gemini 2.5 Flash model from Vertex AI
   const generativeModel = vertexAI.getGenerativeModel({
-    model: 'gemini-1.5-flash',
+    model: 'gemini-2.5-flash',
   });
 
   // Prepare file parts for Vertex AI
