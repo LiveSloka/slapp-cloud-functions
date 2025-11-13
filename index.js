@@ -117,6 +117,29 @@ exports.processEvaluation = async (req, res) => {
 };
 
 /**
+ * Retry function with exponential backoff
+ */
+async function retryWithBackoff(fn, maxRetries = 3, initialDelay = 2000) {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      const isLastAttempt = attempt === maxRetries;
+      const isRetryable = error.status === 503 || error.status === 429 || error.message.includes('overloaded') || error.message.includes('quota');
+      
+      if (isLastAttempt || !isRetryable) {
+        throw error;
+      }
+      
+      const delay = initialDelay * Math.pow(2, attempt - 1);
+      console.log(`      ⚠️  Attempt ${attempt} failed: ${error.message}`);
+      console.log(`      🔄 Retrying in ${delay/1000}s...`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+}
+
+/**
  * Process evaluation with Gemini
  */
 async function processWithGemini(payload) {
@@ -146,16 +169,19 @@ async function processWithGemini(payload) {
     console.log(`      Students: ${studentBatch.map(s => s.studentName).join(', ')}`);
 
     try {
-      // Generate batch report cards
-      const batchResults = await generateBatchReportCards(
-        payload.questionPaper,
-        studentBatch,
-        payload.examMetadata.subjectName,
-        payload.examMetadata.className,
-        payload.examMetadata.examTypeName,
-        payload.examMetadata.evaluationLevel,
-        payload.referenceDocuments || [],
-        payload.markingScheme
+      // Generate batch report cards with retry logic
+      console.log(`      📤 Calling Gemini API (with retry on overload)...`);
+      const batchResults = await retryWithBackoff(() => 
+        generateBatchReportCards(
+          payload.questionPaper,
+          studentBatch,
+          payload.examMetadata.subjectName,
+          payload.examMetadata.className,
+          payload.examMetadata.examTypeName,
+          payload.examMetadata.evaluationLevel,
+          payload.referenceDocuments || [],
+          payload.markingScheme
+        )
       );
 
       // Aggregate results
@@ -731,6 +757,9 @@ exports.saveEvaluationResults = async (req, res) => {
 
 async function saveResultsToMongoDB(responseData) {
   const { examId, tenantId, evaluationLevel, results, createdBy } = responseData;
+  
+  // Define createdByValue early to use throughout the function
+  const createdByValue = createdBy || 'cloud-function';
 
   const exam = await Exam.findOne({ _id: examId, tenantId, softDelete: false });
   if (!exam) throw new Error('Exam not found');
@@ -789,8 +818,6 @@ async function saveResultsToMongoDB(responseData) {
     const examType = await ExamType.findOne({ _id: exam.examTypeId, tenantId, softDelete: false });
     const passPercentage = examType ? (examType.passMarks / examType.maximumMarks) * 100 : 40;
     const status = percentageValue >= passPercentage ? 'pass' : 'fail';
-
-    const createdByValue = createdBy || 'cloud-function';
 
     await new Evaluation({
       examId, studentId: studentSheet.studentId, studentName: studentSheet.studentName,
