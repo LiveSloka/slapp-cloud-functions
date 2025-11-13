@@ -7,14 +7,24 @@
  * - Queues response in SlappResponses queue
  */
 
-const { VertexAI } = require('@google-cloud/vertexai');
+const { VertexAI, HarmCategory, HarmBlockThreshold } = require('@google-cloud/vertexai');
 const { CloudTasksClient } = require('@google-cloud/tasks');
+const { GoogleAuth } = require('google-auth-library');
 
-// Initialize Vertex AI - use us-central1 for Gemini models
-const vertexAI = new VertexAI({
-  project: process.env.GCP_PROJECT_ID || 'slapp-478005',
-  location: 'us-central1'  // Gemini models are available in us-central1
-});
+// Initialize Vertex AI with explicit authentication
+let vertexAI;
+async function initializeVertexAI() {
+  if (!vertexAI) {
+    vertexAI = new VertexAI({
+      project: process.env.GCP_PROJECT_ID || 'slapp-478005',
+      location: 'us-central1',
+      googleAuth: new GoogleAuth({
+        scopes: ['https://www.googleapis.com/auth/cloud-platform']
+      })
+    });
+  }
+  return vertexAI;
+}
 
 // Initialize Cloud Tasks for response queue
 const tasksClient = new CloudTasksClient();
@@ -234,8 +244,9 @@ async function generateBatchReportCards(
   referenceDocuments,
   markingScheme
 ) {
-  // Get Gemini 2.5 Flash model from Vertex AI
-  const generativeModel = vertexAI.getGenerativeModel({
+  // Initialize Vertex AI and get Gemini 2.5 Flash model
+  const vertex = await initializeVertexAI();
+  const generativeModel = vertex.getGenerativeModel({
     model: 'gemini-2.5-flash',
   });
 
