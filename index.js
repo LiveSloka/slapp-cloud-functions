@@ -568,8 +568,9 @@ async function saveResultsToMongoDB(responseData) {
   const exam = await Exam.findOne({ _id: examId, tenantId, softDelete: false });
   if (!exam) throw new Error('Exam not found');
 
-  // Build max marks mapping from approved marking scheme
+  // Build max marks mapping and section mapping from approved marking scheme
   let maxMarksMap = {};
+  let sectionMap = {}; // Map questionNumber to sectionName
   let schemeTotalMarks = null;
   
   if (exam.markingSchemeId) {
@@ -579,9 +580,11 @@ async function saveResultsToMongoDB(responseData) {
       markingScheme.sections.forEach(section => {
         section.questions?.forEach(q => {
           maxMarksMap[q.questionNumber] = q.marks;
+          sectionMap[q.questionNumber] = section.sectionName; // Map question to section
         });
       });
       console.log(`   📋 Using marking scheme total marks: ${schemeTotalMarks}`);
+      console.log(`   📋 Section mapping created for ${Object.keys(sectionMap).length} questions`);
     }
   }
 
@@ -594,11 +597,23 @@ async function saveResultsToMongoDB(responseData) {
 
     if (!evaluationResult?.questions) continue;
 
-    // ALWAYS use marking scheme max marks (override AI's values completely)
-    const questionsWithCorrectMaxMarks = evaluationResult.questions.map(q => ({
-      ...q,
-      maxMarks: maxMarksMap[q.questionNumber] || q.maxMarks
-    }));
+    // ALWAYS use marking scheme max marks and section (override AI's values completely)
+    const questionsWithCorrectMaxMarks = evaluationResult.questions.map(q => {
+      const correctedQuestion = {
+        ...q,
+        maxMarks: maxMarksMap[q.questionNumber] || q.maxMarks
+      };
+      
+      // Populate section from marking scheme if available (prioritize marking scheme section)
+      if (sectionMap[q.questionNumber]) {
+        correctedQuestion.section = sectionMap[q.questionNumber];
+      } else if (!correctedQuestion.section || correctedQuestion.section === 'General' || correctedQuestion.section === 'N/A') {
+        // Keep existing section or use default if no section in marking scheme
+        correctedQuestion.section = correctedQuestion.section || 'General';
+      }
+      
+      return correctedQuestion;
+    });
 
     const totalMarksAwarded = questionsWithCorrectMaxMarks.reduce((sum, q) => sum + (parseFloat(q.marksAwarded) || 0), 0);
     
