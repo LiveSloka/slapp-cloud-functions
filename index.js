@@ -206,10 +206,16 @@ async function generateStudentReportCard(
 ) {
   // Get Gemini 2.5 Flash model from Vertex AI with data source (retrieval) configuration
   const projectId = process.env.GCP_PROJECT_ID || 'slapp-478005';
-  const location = 'us-central1';
+  // Location can be 'global', 'us-central1', 'europe-west1', etc. depending on where your datastore is
+  // For Vertex AI Search datastores, 'global' is commonly used
+  const location = 'global';
   
   // Configure data source for grounding/retrieval
-  const dataStoreName = `projects/${projectId}/locations/${location}/dataStores/${VERTEX_AI_DATA_SOURCE_ID}`;
+  // Format: projects/{project}/locations/{location}/collections/{collection}/dataStores/{datastore}
+  // Use default_collection for Vertex AI Search datastores
+  const dataStoreName = `projects/${projectId}/locations/${location}/collections/default_collection/dataStores/${VERTEX_AI_DATA_SOURCE_ID}`;
+  
+  console.log('   🔍 Data Store Resource Name:', dataStoreName);
   
   const generativeModel = vertexAI.getGenerativeModel({
     model: 'gemini-2.5-flash',
@@ -275,22 +281,328 @@ async function generateStudentReportCard(
   const response = result.response;
   const text = response.candidates[0].content.parts[0].text;
 
-  // Parse JSON response - handle two-section format (text feedback + JSON)
+  console.log('   📄 Response text preview (first 500 chars):', text.substring(0, 500));
+  console.log('   📄 Response text length:', text.length, 'characters');
+
+  // Parse JSON response - expecting pure JSON (no markdown)
   let evaluationData;
   
-  // Try to extract JSON from markdown code blocks first
-  const jsonMatch = text.match(/```json\n([\s\S]*?)\n```/) || text.match(/```\n([\s\S]*?)\n```/);
+  // Helper function to clean and fix common JSON issues
+  function cleanJSON(jsonString) {
+    try {
+      // Remove markdown code blocks if present
+      jsonString = jsonString.replace(/```json\s*\n?/g, '').replace(/```\s*\n?/g, '').trim();
+      
+      // Remove leading/trailing non-JSON text
+      const firstBrace = jsonString.indexOf('{');
+      const lastBrace = jsonString.lastIndexOf('}');
+      if (firstBrace >= 0 && lastBrace > firstBrace) {
+        jsonString = jsonString.substring(firstBrace, lastBrace + 1);
+      }
+      
+      // Fix common JSON issues:
+      // 1. Fix unquoted property names (e.g., {studentName: ...} -> {"studentName": ...})
+      // Only fix if not already quoted and not inside a string value
+      jsonString = jsonString.replace(/([{,]\s*)([a-zA-Z_$][a-zA-Z0-9_$]*)\s*:/g, (match, prefix, propName) => {
+        // Check if it's already quoted
+        if (!match.includes('"')) {
+          return `${prefix}"${propName}":`;
+        }
+        return match;
+      });
+      
+      // 2. Fix single quotes to double quotes for strings (only clear string delimiters)
+      // Match pattern: : 'value' or [ 'value' or , 'value'
+      jsonString = jsonString.replace(/([:,\[])\s*'((?:[^'\\]|\\.)*)'(\s*[,}\]])/g, '$1 "$2"$3');
+      
+      // 3. Fix missing commas between properties (look for } or ] followed by { or [ without comma)
+      // This is tricky - we need to be careful not to break strings
+      // Use a more sophisticated approach: track string state
+      let inString = false;
+      let escapeNext = false;
+      let result = '';
+      
+      for (let i = 0; i < jsonString.length; i++) {
+        const char = jsonString[i];
+        const nextChar = i < jsonString.length - 1 ? jsonString[i + 1] : '';
+        const prevChar = i > 0 ? jsonString[i - 1] : '';
+        
+        if (escapeNext) {
+          result += char;
+          escapeNext = false;
+          continue;
+        }
+        
+        if (char === '\\') {
+          result += char;
+          escapeNext = true;
+          continue;
+        }
+        
+        if (char === '"') {
+          inString = !inString;
+          result += char;
+          continue;
+        }
+        
+        if (!inString) {
+          // Check for missing comma: } or ] followed by { or [ or "
+          if ((char === '}' || char === ']') && (nextChar === '{' || nextChar === '[' || nextChar === '"')) {
+            result += char + ',';
+            continue;
+          }
+          // Check for missing comma: " followed by } or ] (end of string before closing)
+          // But we need to check if there's already a comma
+          if (prevChar === '"' && (char === '}' || char === ']') && i > 1) {
+            const beforeLast = jsonString[i - 2];
+            if (beforeLast !== ',' && beforeLast !== ':' && beforeLast !== '[') {
+              // Need to check context more carefully - skip for now to avoid false positives
+            }
+          }
+        }
+        
+        result += char;
+      }
+      
+      jsonString = result;
+      
+      // 4. Fix trailing commas (safe to do now)
+      jsonString = jsonString.replace(/,(\s*[}\]])/g, '$1');
+      
+      // 5. Fix escaped quotes that might have been double-escaped
+      jsonString = jsonString.replace(/\\\\"/g, '\\"');
+      
+      // 6. Additional pass: Fix missing commas in arrays and objects (character-by-character for safety)
+      // This handles cases like: ["item1" "item2"] or {key: "value" key2: "value2"}
+      let inString2 = false;
+      let escapeNext2 = false;
+      let inArray = false;
+      let inObject = false;
+      let braceDepth = 0;
+      let bracketDepth = 0;
+      let result2 = '';
+      
+      for (let i = 0; i < jsonString.length; i++) {
+        const char = jsonString[i];
+        const nextChar = i < jsonString.length - 1 ? jsonString[i + 1] : '';
+        const prevChar = i > 0 ? result2[result2.length - 1] : '';
+        const beforePrev = i > 1 ? result2[result2.length - 2] : '';
+        
+        if (escapeNext2) {
+          result2 += char;
+          escapeNext2 = false;
+          continue;
+        }
+        
+        if (char === '\\') {
+          result2 += char;
+          escapeNext2 = true;
+          continue;
+        }
+        
+        if (char === '"') {
+          inString2 = !inString2;
+          result2 += char;
+          continue;
+        }
+        
+        if (!inString2) {
+          if (char === '{') {
+            inObject = true;
+            braceDepth++;
+            result2 += char;
+            continue;
+          }
+          if (char === '}') {
+            braceDepth--;
+            if (braceDepth === 0) inObject = false;
+            result2 += char;
+            continue;
+          }
+          if (char === '[') {
+            inArray = true;
+            bracketDepth++;
+            result2 += char;
+            continue;
+          }
+          if (char === ']') {
+            bracketDepth--;
+            if (bracketDepth === 0) inArray = false;
+            result2 += char;
+            continue;
+          }
+          
+          // Fix missing comma: closing quote followed by opening quote (array elements)
+          if (prevChar === '"' && char === '"' && inArray && beforePrev !== ',' && beforePrev !== '[') {
+            result2 = result2.slice(0, -1) + '",' + char;
+            continue;
+          }
+          
+          // Fix missing comma: closing quote followed by { (object in array)
+          if (prevChar === '"' && char === '{' && inArray && beforePrev !== ',' && beforePrev !== '[') {
+            result2 = result2.slice(0, -1) + '",' + char;
+            continue;
+          }
+          
+          // Fix missing comma: } followed by { (objects in array)
+          if (prevChar === '}' && char === '{' && inArray && beforePrev !== ',' && beforePrev !== '[') {
+            result2 = result2.slice(0, -1) + '},' + char;
+            continue;
+          }
+          
+          // Fix missing comma: ] followed by [ (nested arrays)
+          if (prevChar === ']' && char === '[' && beforePrev !== ',' && beforePrev !== '[') {
+            result2 = result2.slice(0, -1) + '],' + char;
+            continue;
+          }
+          
+          // Fix missing comma: } followed by " (property after object value)
+          if (prevChar === '}' && char === '"' && inObject && beforePrev !== ',' && beforePrev !== '{') {
+            result2 = result2.slice(0, -1) + '},' + char;
+            continue;
+          }
+        }
+        
+        result2 += char;
+      }
+      
+      jsonString = result2;
+      
+      // 7. Final cleanup: Remove any duplicate commas that might have been created
+      jsonString = jsonString.replace(/,+/g, ',').replace(/,(\s*[}\]])/g, '$1');
+      
+      return jsonString.trim();
+    } catch (e) {
+      console.error('   ⚠️ Error cleaning JSON:', e.message);
+      return jsonString;
+    }
+  }
   
-  if (jsonMatch) {
-    evaluationData = JSON.parse(jsonMatch[1]);
-  } else {
-    // Look for JSON object in the response
-    const jsonObjMatch = text.match(/\{[\s\S]*"students"[\s\S]*\}/);
-    if (jsonObjMatch) {
-      evaluationData = JSON.parse(jsonObjMatch[0]);
-    } else {
-      // Fallback: try parsing entire text as JSON
-      evaluationData = JSON.parse(text);
+  // First, try to parse the entire response as JSON (since we requested pure JSON)
+  try {
+    const cleanedText = cleanJSON(text);
+    evaluationData = JSON.parse(cleanedText);
+    console.log('   ✅ Successfully parsed response as pure JSON');
+  } catch (directParseError) {
+    console.log('   ⚠️ Direct JSON parse failed, trying extraction methods...');
+    console.log('   📄 Parse error:', directParseError.message);
+    
+    // Fallback 1: Try to extract JSON from markdown code blocks (in case Gemini still uses them)
+    const jsonCodeBlockMatch = text.match(/```json\s*\n([\s\S]*?)\n```/) || 
+                               text.match(/```\s*\n([\s\S]*?)\n```/) ||
+                               text.match(/```json\s*\n([\s\S]*?)```/) ||
+                               text.match(/```\s*\n([\s\S]*?)```/);
+    
+    if (jsonCodeBlockMatch) {
+      console.log('   ✅ Found JSON in code block');
+      try {
+        const cleanedJson = cleanJSON(jsonCodeBlockMatch[1]);
+        evaluationData = JSON.parse(cleanedJson);
+        console.log('   ✅ Successfully parsed JSON from code block');
+      } catch (parseError) {
+        console.error('   ❌ Failed to parse JSON from code block:', parseError.message);
+        const errorPos = parseInt(parseError.message.match(/position (\d+)/)?.[1] || '0');
+        console.error('   📄 JSON block content (first 500 chars):', jsonCodeBlockMatch[1].substring(0, 500));
+        if (errorPos > 0) {
+          console.error('   📄 JSON block content (around error position ' + errorPos + '):', jsonCodeBlockMatch[1].substring(Math.max(0, errorPos - 200), Math.min(jsonCodeBlockMatch[1].length, errorPos + 200)));
+        }
+        // Continue to next fallback
+      }
+    }
+    
+    if (!evaluationData) {
+      // Fallback 2: Look for JSON object in the response (starting with { and containing "students")
+      const jsonObjPattern = /\{(?:[^{}]|(?:\{(?:[^{}]|(?:[^{}]*))*\}))*"students"(?:[^{}]|(?:\{(?:[^{}]|(?:[^{}]*))*\}))*\}/;
+      const jsonObjMatch = text.match(jsonObjPattern) || 
+                           text.match(/\{[\s\S]*?"students"[\s\S]*?\}/);
+      
+      if (jsonObjMatch) {
+        console.log('   ✅ Found JSON object in response');
+        try {
+          const cleanedJson = cleanJSON(jsonObjMatch[0]);
+          evaluationData = JSON.parse(cleanedJson);
+          console.log('   ✅ Successfully parsed JSON object');
+        } catch (parseError) {
+          console.error('   ❌ Failed to parse JSON object:', parseError.message);
+          console.error('   📄 JSON object preview:', jsonObjMatch[0].substring(0, 500));
+          
+          // Try to find the JSON object more precisely by looking for the last occurrence of ``` or finding it after markdown
+          const sections = text.split(/```/);
+          for (let i = sections.length - 1; i >= 0; i--) {
+            const section = sections[i].trim();
+            if (section.startsWith('{') && section.includes('"students"')) {
+              try {
+                const cleanedSection = cleanJSON(section);
+                evaluationData = JSON.parse(cleanedSection);
+                console.log('   ✅ Found and parsed JSON in last code block section');
+                break;
+              } catch (e) {
+                // Continue trying
+              }
+            }
+          }
+          
+          if (!evaluationData) {
+            // Continue to next fallback
+          }
+        }
+      }
+    }
+    
+    if (!evaluationData) {
+      // Last resort: Search for JSON by finding "students" key and matching braces
+      console.log('   🔍 Last resort: Searching for JSON structure...');
+      console.log('   📄 Response length:', text.length, 'characters');
+      
+      const studentsMatch = text.match(/"students"\s*:/);
+      if (studentsMatch) {
+        console.log('   ✅ Found "students" key at position:', studentsMatch.index);
+        
+        // Find opening brace before "students"
+        let jsonStart = text.lastIndexOf('{', studentsMatch.index);
+        
+        // Try to find matching closing brace
+        let braceCount = 0;
+        let jsonEnd = -1;
+        
+        for (let i = jsonStart; i < text.length; i++) {
+          if (text[i] === '{') braceCount++;
+          if (text[i] === '}') {
+            braceCount--;
+            if (braceCount === 0) {
+              jsonEnd = i + 1;
+              break;
+            }
+          }
+        }
+        
+        if (jsonEnd > jsonStart && jsonEnd > 0) {
+          try {
+            const jsonStr = text.substring(jsonStart, jsonEnd);
+            console.log('   📄 Extracted JSON string (first 300 chars):', jsonStr.substring(0, 300));
+            const cleanedJson = cleanJSON(jsonStr);
+            console.log('   📄 Cleaned JSON string (first 300 chars):', cleanedJson.substring(0, 300));
+            evaluationData = JSON.parse(cleanedJson);
+            console.log('   ✅ Found and parsed JSON by brace matching');
+          } catch (e) {
+            console.error('   ❌ Failed to parse JSON by brace matching:', e.message);
+            console.error('   📄 Error at position:', e.message.match(/position (\d+)/)?.[1] || 'unknown');
+            const errorPos = parseInt(e.message.match(/position (\d+)/)?.[1] || '0');
+            if (errorPos > 0) {
+              const jsonStr = text.substring(jsonStart, jsonEnd);
+              const cleanedJson = cleanJSON(jsonStr);
+              console.error('   📄 Content around error:', cleanedJson.substring(Math.max(0, errorPos - 100), Math.min(cleanedJson.length, errorPos + 100)));
+            }
+            throw new Error(`Could not extract valid JSON from response. Error: ${e.message}. Response preview: ${text.substring(0, 500)}`);
+          }
+        } else {
+          throw new Error(`Could not find complete JSON structure. Response preview: ${text.substring(0, 500)}`);
+        }
+      } else {
+        console.error('   ❌ No "students" key found in response');
+        console.error('   📄 Full response text (last 1000 chars):', text.substring(Math.max(0, text.length - 1000)));
+        throw new Error(`Response does not contain expected JSON with "students" key. Response preview: ${text.substring(0, 500)}`);
+      }
     }
   }
 
@@ -340,25 +652,36 @@ async function generateStudentReportCard(
       };
     }) || [];
     
-    // Transform overallFeedback - convert object to string if needed
-    let overallFeedbackStr = '';
-    if (typeof studentResult.overallFeedback === 'string') {
-      overallFeedbackStr = studentResult.overallFeedback;
-    } else if (studentResult.overallFeedback && typeof studentResult.overallFeedback === 'object') {
-      // Build comprehensive feedback string from object structure
-      const feedbackParts = [];
-      if (studentResult.overallFeedback.summary) {
-        feedbackParts.push(studentResult.overallFeedback.summary);
-      }
-      if (studentResult.overallFeedback.areasOfImprovement && studentResult.overallFeedback.areasOfImprovement.length > 0) {
-        feedbackParts.push(`Areas for Improvement: ${studentResult.overallFeedback.areasOfImprovement.join(', ')}`);
-      }
-      if (studentResult.overallFeedback.recommendations) {
-        feedbackParts.push(`Recommendations: ${studentResult.overallFeedback.recommendations}`);
-      }
-      overallFeedbackStr = feedbackParts.join('\n\n');
+    // Transform overallFeedback - keep as object (matching schema)
+    let overallFeedbackObj = null;
+    if (studentResult.overallFeedback && typeof studentResult.overallFeedback === 'object') {
+      // Use the object directly (matching schema structure)
+      overallFeedbackObj = {
+        summary: studentResult.overallFeedback.summary || '',
+        areasOfImprovement: Array.isArray(studentResult.overallFeedback.areasOfImprovement) 
+          ? studentResult.overallFeedback.areasOfImprovement 
+          : [],
+        spellingErrors: Array.isArray(studentResult.overallFeedback.spellingErrors) 
+          ? studentResult.overallFeedback.spellingErrors 
+          : [],
+        recommendations: studentResult.overallFeedback.recommendations || ''
+      };
+    } else if (typeof studentResult.overallFeedback === 'string') {
+      // If it's a string, create an object with the string as summary (backward compatibility)
+      overallFeedbackObj = {
+        summary: studentResult.overallFeedback,
+        areasOfImprovement: [],
+        spellingErrors: [],
+        recommendations: ''
+      };
     } else {
-      overallFeedbackStr = 'Evaluation completed. Review detailed feedback for each question.';
+      // Default empty object
+      overallFeedbackObj = {
+        summary: '',
+        areasOfImprovement: [],
+        spellingErrors: [],
+        recommendations: ''
+      };
     }
     
     // Build transformed student result
@@ -374,9 +697,7 @@ async function generateStudentReportCard(
         depthOfUnderstanding: 0,
         completeness: 0
       },
-      overallFeedback: overallFeedbackStr,
-      // Preserve original overallFeedback object for future use if needed
-      overallFeedbackObject: typeof studentResult.overallFeedback === 'object' ? studentResult.overallFeedback : undefined
+      overallFeedback: overallFeedbackObj
     };
   }
 
@@ -428,23 +749,44 @@ ${questionsSection}
 
 ${evalCriteria}
 
+## General MCQ Rules (Apply to ALL Evaluation Levels)
+
+**These rules are COMMON for MCQ question type evaluation, regardless of evaluation level (easy, medium, strict, very_strict):**
+
+1. **Option Acceptance:**
+   - Accept option letter (A/B/C/D), option text, or both
+   - Ignore case (e.g., "a" = "A") and punctuation when matching
+   - Match the student's selected option to the correct answer using flexible matching
+
+2. **Multiple Options Selected:**
+   - If multiple options are chosen for a single-correct MCQ → award 0 marks
+   - If the student has clearly marked/circled/ticked multiple options (even if one is correct) → award 0 marks
+   - Only award full marks if exactly ONE option matches the correct answer
+
+3. **Overwritten/Crossed Options:**
+   - If the student writes an option and later clearly overwrites/crosses it to select another option, take the FINAL clear intent as the student's choice
+   - If the final intent is ambiguous or unclear → award 0 marks
+   - Only award marks if there is a clear, unambiguous final selection
+
+4. **Passage/Figure/Data-Based MCQs (Case/Testlet Questions):**
+   - For passage-based, figure-based, or data-based MCQs (common in CBSE case/testlet format):
+     - The evaluation rationale MUST quote the relevant line number, figure label, or data value from the source
+     - Specify which specific part of the passage/figure/data supports the correct answer
+     - Example: "Correct answer based on line 3 of the passage: '...quote...'" or "Correct based on label 'X' in Figure 1"
+   - This applies even though MCQ questions don't require detailed feedback - the rationale should still reference the source
+
+**MCQ Scoring Summary (Same for ALL Evaluation Levels):**
+- Correct option selected (single, clear selection) → Full marks (maxMarks)
+- Wrong option selected OR multiple options selected OR ambiguous selection → 0 marks
+- Binary evaluation: All or nothing (no partial credit)
+- These rules apply uniformly whether evaluation level is easy, medium, strict, or very_strict
+
 ## Output Format
 
-Your response MUST contain TWO sections:
+**CRITICAL: Return ONLY valid JSON. Do NOT include any markdown, text explanations, or code block markers. Return pure JSON only.**
 
-### Section 1: Detailed Marking Reasoning and Feedback (for Non-MCQ questions only)
+Return a JSON object with ALL questions (MCQ and Non-MCQ) in this exact format:
 
-For every NON-MCQ question, provide:
-
-**Q. [Question Number] ([Section Name]): [Final Marks Awarded] / [M]**
-
-**Feedback:** [Text-based feedback explaining what was correct, where deductions were made, and how to improve. Be brief and point-wise.]
-
-### Section 2: Final Scores JSON Array
-
-Return a JSON array with ALL questions (MCQ and Non-MCQ) in this exact format:
-
-\`\`\`json
 {
   "students": [
     {
@@ -494,15 +836,22 @@ Return a JSON array with ALL questions (MCQ and Non-MCQ) in this exact format:
     }
   ]
 }
-\`\`\`
 
 **Critical Requirements:**
-- For MCQ questions: Set marksAwarded to maxMarks (if correct) or 0 (if wrong). Skip why_marks_awarded, deductions, tiered_feedback for MCQs.
-- For Non-MCQ questions: Provide all fields including why_marks_awarded, deductions, tiered_feedback, value_points_matched.
+- Return ONLY valid JSON - no markdown, no code blocks, no text explanations
+- Start your response with { and end with }
+- **For MCQ questions:**
+  - Follow the General MCQ Rules section above (option acceptance, multiple options, overwritten options, passage/figure-based requirements)
+  - Set marksAwarded to maxMarks (if correct) or 0 (if wrong). Binary evaluation only.
+  - Skip why_marks_awarded, deductions, tiered_feedback fields for MCQs (they are not required).
+  - For passage/figure/data-based MCQs: Still include a brief reasonForMarksAllocation that quotes the relevant line/label/value from the source.
+- **For Non-MCQ questions:**
+  - Provide all fields including why_marks_awarded, deductions, tiered_feedback, value_points_matched.
+  - Follow the evaluation level-specific instructions above.
 - Use exact max marks from marking scheme.
 - Round final marks to nearest 0.5 for consistency.
 - Be brief, point-wise, and never invent facts not shown in the answer.
-- Return valid JSON only - no markdown outside of the code block.`;
+- Ensure the JSON is valid and parseable.`;
 }
 
 /**
@@ -626,10 +975,26 @@ const evaluationSchema = new mongoose.Schema({
   evaluationLevel: String,
   questions: [{
     questionNumber: String,
+    section: String,
     questionType: String,
     maxMarks: Number,
     marksAwarded: Number,
     reasonForMarksAllocation: String,
+    // New CBSE format fields
+    awarded_marks: Number,
+    out_of: Number,
+    why_marks_awarded: [String],
+    deductions: [{
+      amount: Number,
+      reason: String
+    }],
+    tiered_feedback: {
+      below_average: String,
+      average: String,
+      above_average: String,
+      brilliant: String
+    },
+    value_points_matched: [String],
     rubrics: {
       spellingGrammar: Number,
       creativity: Number,
@@ -638,7 +1003,17 @@ const evaluationSchema = new mongoose.Schema({
       completeness: Number
     }
   }],
-  overallFeedback: String,
+  overallFeedback: {
+    summary: String,
+    areasOfImprovement: [String],
+    spellingErrors: [String],
+    recommendations: String,
+    translations: {
+      summary_en: String,
+      areasOfImprovement_en: [String],
+      recommendations_en: String
+    }
+  },
   totalMarksAwarded: Number,
   totalMaxMarks: Number,
   percentage: Number,
