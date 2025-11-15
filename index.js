@@ -10,6 +10,15 @@
 const { VertexAI } = require('@google-cloud/vertexai');
 const { CloudTasksClient } = require('@google-cloud/tasks');
 
+// ============================================================================
+// VERTEX AI DATA SOURCE CONFIGURATION
+// ============================================================================
+// Configure your Vertex AI data source (retrieval) here.
+// Copy and paste your data source ID below.
+// ============================================================================
+
+const VERTEX_AI_DATA_SOURCE_ID = 'ajas-cbse-10th-teacher-datastore_1763198188199';
+
 // Initialize Vertex AI - it will automatically use Application Default Credentials
 // from the Cloud Function's service account via the metadata server
 const vertexAI = new VertexAI({
@@ -195,9 +204,23 @@ async function generateStudentReportCard(
   evaluationLevel,
   markingScheme
 ) {
-  // Get Gemini 2.5 Flash model from Vertex AI
+  // Get Gemini 2.5 Flash model from Vertex AI with data source (retrieval) configuration
+  const projectId = process.env.GCP_PROJECT_ID || 'slapp-478005';
+  const location = 'us-central1';
+  
+  // Configure data source for grounding/retrieval
+  const dataStoreName = `projects/${projectId}/locations/${location}/dataStores/${VERTEX_AI_DATA_SOURCE_ID}`;
+  
   const generativeModel = vertexAI.getGenerativeModel({
     model: 'gemini-2.5-flash',
+    // Configure grounding with data store (retrieval)
+    tools: [{
+      retrieval: {
+        vertexAiSearch: {
+          datastore: dataStoreName  // Direct string, not nested object
+        }
+      }
+    }]
   });
 
   // Prepare file parts for Vertex AI - ONLY student answer sheet
@@ -220,8 +243,9 @@ async function generateStudentReportCard(
 
   console.log('   📝 Prompt length:', prompt.length, 'characters');
   console.log('   📎 Files attached:', fileParts.length, '(student answer sheet only)');
+  console.log('   🔍 Data Source (Retrieval) enabled:', VERTEX_AI_DATA_SOURCE_ID);
 
-  // Call Vertex AI
+  // Call Vertex AI with data source retrieval enabled
   const startTime = Date.now();
   const request = {
     contents: [
@@ -233,6 +257,14 @@ async function generateStudentReportCard(
         ]
       }
     ],
+    // Ensure tools are included in the request (grounding with data store)
+    tools: [{
+      retrieval: {
+        vertexAiSearch: {
+          datastore: dataStoreName  // Direct string, not nested object
+        }
+      }
+    }]
   };
   
   const result = await generativeModel.generateContent(request);
@@ -243,26 +275,109 @@ async function generateStudentReportCard(
   const response = result.response;
   const text = response.candidates[0].content.parts[0].text;
 
-  // Parse JSON response
-  const jsonMatch = text.match(/```json\n([\s\S]*?)\n```/) || text.match(/```\n([\s\S]*?)\n```/);
+  // Parse JSON response - handle two-section format (text feedback + JSON)
   let evaluationData;
+  
+  // Try to extract JSON from markdown code blocks first
+  const jsonMatch = text.match(/```json\n([\s\S]*?)\n```/) || text.match(/```\n([\s\S]*?)\n```/);
   
   if (jsonMatch) {
     evaluationData = JSON.parse(jsonMatch[1]);
   } else {
-    evaluationData = JSON.parse(text);
+    // Look for JSON object in the response
+    const jsonObjMatch = text.match(/\{[\s\S]*"students"[\s\S]*\}/);
+    if (jsonObjMatch) {
+      evaluationData = JSON.parse(jsonObjMatch[0]);
+    } else {
+      // Fallback: try parsing entire text as JSON
+      evaluationData = JSON.parse(text);
+    }
   }
 
   // Extract token usage from Vertex AI response
   const usageMetadata = response.usageMetadata || {};
   const tokenUsage = calculateTokenCost(usageMetadata);
 
-  // Organize results by student ID
+  // Transform response format to match backend expectations
+  // Handle both old format and new CBSE format with detailed feedback
   const studentsData = {};
-  const studentResult = evaluationData.students?.[0];
+  const studentResult = evaluationData.students?.[0] || evaluationData.students?.[0];
   
   if (studentResult) {
-    studentsData[student.studentId] = studentResult;
+    // Transform questions to ensure compatibility with backend format
+    const transformedQuestions = studentResult.questions?.map(q => {
+      // Ensure marksAwarded exists (use awarded_marks if available)
+      const marksAwarded = q.marksAwarded !== undefined ? q.marksAwarded : (q.awarded_marks !== undefined ? q.awarded_marks : 0);
+      
+      // Build comprehensive reason from new format fields
+      let reasonForMarksAllocation = q.reasonForMarksAllocation || '';
+      
+      // Enhance reason with CBSE format details if available
+      if (q.why_marks_awarded && q.why_marks_awarded.length > 0) {
+        reasonForMarksAllocation = q.why_marks_awarded.join('; ') + (reasonForMarksAllocation ? ' | ' + reasonForMarksAllocation : '');
+      }
+      
+      if (q.deductions && q.deductions.length > 0) {
+        const deductionsText = q.deductions.map(d => `${d.reason} (-${d.amount})`).join('; ');
+        reasonForMarksAllocation += (reasonForMarksAllocation ? ' | ' : '') + 'Deductions: ' + deductionsText;
+      }
+      
+      // Return transformed question object
+      return {
+        questionNumber: q.questionNumber,
+        section: q.section || 'General',
+        questionType: q.questionType || 'SA',
+        maxMarks: q.maxMarks || q.out_of || 0,
+        marksAwarded: marksAwarded,
+        reasonForMarksAllocation: reasonForMarksAllocation || 'Marks awarded based on evaluation criteria',
+        // Preserve new format fields for future use
+        awarded_marks: q.awarded_marks || marksAwarded,
+        out_of: q.out_of || q.maxMarks,
+        why_marks_awarded: q.why_marks_awarded,
+        deductions: q.deductions,
+        tiered_feedback: q.tiered_feedback,
+        value_points_matched: q.value_points_matched
+      };
+    }) || [];
+    
+    // Transform overallFeedback - convert object to string if needed
+    let overallFeedbackStr = '';
+    if (typeof studentResult.overallFeedback === 'string') {
+      overallFeedbackStr = studentResult.overallFeedback;
+    } else if (studentResult.overallFeedback && typeof studentResult.overallFeedback === 'object') {
+      // Build comprehensive feedback string from object structure
+      const feedbackParts = [];
+      if (studentResult.overallFeedback.summary) {
+        feedbackParts.push(studentResult.overallFeedback.summary);
+      }
+      if (studentResult.overallFeedback.areasOfImprovement && studentResult.overallFeedback.areasOfImprovement.length > 0) {
+        feedbackParts.push(`Areas for Improvement: ${studentResult.overallFeedback.areasOfImprovement.join(', ')}`);
+      }
+      if (studentResult.overallFeedback.recommendations) {
+        feedbackParts.push(`Recommendations: ${studentResult.overallFeedback.recommendations}`);
+      }
+      overallFeedbackStr = feedbackParts.join('\n\n');
+    } else {
+      overallFeedbackStr = 'Evaluation completed. Review detailed feedback for each question.';
+    }
+    
+    // Build transformed student result
+    studentsData[student.studentId] = {
+      studentId: student.studentId,
+      studentName: studentResult.studentName || student.studentName,
+      rollNumber: studentResult.rollNumber || student.rollNumber,
+      questions: transformedQuestions,
+      overallRubrics: studentResult.overallRubrics || {
+        spellingGrammar: 0,
+        creativity: 0,
+        clarity: 0,
+        depthOfUnderstanding: 0,
+        completeness: 0
+      },
+      overallFeedback: overallFeedbackStr,
+      // Preserve original overallFeedback object for future use if needed
+      overallFeedbackObject: typeof studentResult.overallFeedback === 'object' ? studentResult.overallFeedback : undefined
+    };
   }
 
   return {
@@ -279,32 +394,55 @@ function buildEvaluationPrompt(studentAnswers, subjectName, className, examTypeN
   // Single student (batch size = 1)
   const student = studentAnswers[0];
   
-  // Build compact marking scheme section
+  // Build detailed marking scheme section with value points
   let questionsSection = '';
   if (markingScheme && markingScheme.approved) {
-    questionsSection = `## Questions & Marks\n\n${markingScheme.sections.map(section => 
-      `**${section.sectionName}** (${section.sectionTotalMarks}m)\n${section.questions.map(q => 
-        `Q${q.questionNumber}: ${q.questionText || q.questionType} [${q.marks}m]`
-      ).join('\n')}`
+    questionsSection = `## Questions & Marks with Value Points\n\n${markingScheme.sections.map(section => 
+      `**${section.sectionName}** (${section.sectionTotalMarks}m)\n${section.questions.map(q => {
+        const itemType = q.questionType || 'SA';
+        return `Q${q.questionNumber} (${itemType}, ${q.marks}m): ${q.questionText || 'See question paper'}
+  - Max Marks (M): ${q.marks}
+  - Item Type: ${itemType}
+  - Official Value Points: ${q.valuePoints ? q.valuePoints.join(', ') : 'Infer from question content'}
+  - Step Marks: ${q.stepMarks ? q.stepMarks.join(' | ') : 'Not specified'}`;
+      }).join('\n\n')}`
     ).join('\n\n')}\n\n**Total: ${markingScheme.totalMarks} marks**`;
   } else {
-    questionsSection = `## Questions\n\nEvaluate all questions in the answer sheet. Determine appropriate maximum marks for each question.`;
+    questionsSection = `## Questions\n\nEvaluate all questions in the answer sheet. Determine appropriate maximum marks for each question. Infer value points and step marks based on question content.`;
   }
 
-  // Compact evaluation criteria
+  // Get detailed evaluation criteria
   const evalCriteria = getEvaluationInstructions(evaluationLevel);
 
-  return `Evaluate this ${className} ${subjectName} ${examTypeName} answer sheet using ${evaluationLevel} criteria.
+  return `You are an expert CBSE examiner evaluating a student's answer sheet.
 
+**Subject:** ${subjectName}
+**Class:** ${className}
+**Exam Type:** ${examTypeName}
+**Evaluation Level:** ${evaluationLevel}
 **Student:** ${student.studentName} (Roll: ${student.rollNumber})
 
 ${questionsSection}
 
-## Task
+## Evaluation Instructions
 
-Evaluate the attached answer sheet. ${evalCriteria} Use exact max marks above.
+${evalCriteria}
 
-## Output (JSON only, no other text)
+## Output Format
+
+Your response MUST contain TWO sections:
+
+### Section 1: Detailed Marking Reasoning and Feedback (for Non-MCQ questions only)
+
+For every NON-MCQ question, provide:
+
+**Q. [Question Number] ([Section Name]): [Final Marks Awarded] / [M]**
+
+**Feedback:** [Text-based feedback explaining what was correct, where deductions were made, and how to improve. Be brief and point-wise.]
+
+### Section 2: Final Scores JSON Array
+
+Return a JSON array with ALL questions (MCQ and Non-MCQ) in this exact format:
 
 \`\`\`json
 {
@@ -315,10 +453,29 @@ Evaluate the attached answer sheet. ${evalCriteria} Use exact max marks above.
       "questions": [
         {
           "questionNumber": "1",
-          "questionType": "Type",
+          "section": "Section name",
+          "questionType": "MCQ | VSA | SA | LA | Case | Map | Grammar | Writing | Numericals/Derivation",
           "maxMarks": 10,
           "marksAwarded": 8,
-          "reasonForMarksAllocation": "Brief reason for marks given"
+          "awarded_marks": 8,
+          "out_of": 10,
+          "why_marks_awarded": [
+            "✓ Matched value points: <list the exact ideas/steps credited>",
+            "✓ Method/working shown: <brief note>",
+            "✓ Format/presentation credit: <if any>"
+          ],
+          "deductions": [
+            {"amount": 1, "reason": "Missing final step"},
+            {"amount": 1, "reason": "Minor grammar issue"}
+          ],
+          "tiered_feedback": {
+            "below_average": "<1 fix now action in plain language>",
+            "average": "<1 refinement to reach full marks>",
+            "above_average": "<1 enrichment or precision tip>",
+            "brilliant": "<1 extension/insight to deepen mastery>"
+          },
+          "value_points_matched": ["<point 1>", "<point 2>", "..."],
+          "reasonForMarksAllocation": "Brief summary of marks awarded"
         }
       ],
       "overallRubrics": {
@@ -328,31 +485,71 @@ Evaluate the attached answer sheet. ${evalCriteria} Use exact max marks above.
         "depthOfUnderstanding": 8,
         "completeness": 8
       },
-      "overallFeedback": "Overall performance summary (100-150 words)"
+      "overallFeedback": {
+        "summary": "Overall performance summary (100-150 words)",
+        "areasOfImprovement": ["Area 1", "Area 2"],
+        "spellingErrors": ["word1", "word2"],
+        "recommendations": "Specific recommendations"
+      }
     }
   ]
 }
 \`\`\`
 
-**Requirements:**
-- Use exact max marks listed above
-- Evaluate all questions with marks and brief reason
-- Overall rubrics only: 0-10 scale for spellingGrammar, creativity, clarity, depthOfUnderstanding, completeness (averaged across entire answer sheet)
-- Return valid JSON only`;
+**Critical Requirements:**
+- For MCQ questions: Set marksAwarded to maxMarks (if correct) or 0 (if wrong). Skip why_marks_awarded, deductions, tiered_feedback for MCQs.
+- For Non-MCQ questions: Provide all fields including why_marks_awarded, deductions, tiered_feedback, value_points_matched.
+- Use exact max marks from marking scheme.
+- Round final marks to nearest 0.5 for consistency.
+- Be brief, point-wise, and never invent facts not shown in the answer.
+- Return valid JSON only - no markdown outside of the code block.`;
 }
 
 /**
- * Get compact evaluation instructions based on level
+ * Get evaluation instructions based on level
  */
 function getEvaluationInstructions(level) {
   const instructions = {
-    'lenient': 'Award marks generously. Give partial marks for effort and attempt.',
+    'easy': `*Role*: You are a CBSE examiner. Award marks using step‑marking and value points. Prefer inclusion over exclusion: if a response is close to correct, give credit and explain why.
+
+*Easy‑level rules (short):*
+
+1. *Step marking & value points.* Award for each correct/partially correct point shown. If steps are mostly correct but the last line slips, still award *60–80%* of M.
+
+2. *Accept alternatives.* Give credit for equivalent wording, examples, or methods.
+
+3. *No repeat penalties.* Don't deduct more than once for the same recurring mistake.
+
+4. *Gentle presentation/grammar.* Minor grammar, spelling, unit, or neatness issues: at most *min(2, 0.1×M)* total deduction for the whole answer.
+
+5. *Objective items (MCQ/Fill/True‑False).* Full M if correct, else 0. No strictness scaling.
+
+6. *Writing tasks (letters/articles/notices).* Split marks simply: *Format 20% | Content/Ideas 70% | Language 10%*. If format elements are present in any reasonable form, award them.
+
+7. *Math/Numericals/Derivations.* Credit each valid step; missing unit or rough figure = *0.05×M* deduction (cap *0.1×M*).
+
+8. *Map/Label/Diagram.* Award per correct label; small penalty only for missing labels; do not over‑penalize drawing quality.
+
+9. *Benefit of doubt.* If evidence is borderline or OCR is unclear, prefer awarding the lower of two possible credits rather than deducting.
+
+*Scoring recipe (keep it proportional & simple):*
+
+* If item_type = MCQ: score = M or 0.
+
+* Else start with base = 0.
+  * *Content/Value points (≈70% of M):* base += 0.7M × (matched_value_points / expected_value_points).
+  * *Method/Steps/Reasoning (≈20% of M):* add up to 0.2M depending on clarity of working/structure.
+  * *Format/Presentation (≈10% of M):* add up to 0.1M for format/labels/organisation (Writing/Map/Diagram).
+  * Apply *small deductions* per rule 4 & 7 with the stated caps.
+  * *Clamp* final score to [0, M] and *round to nearest 0.5* for consistency.`,
+
+    'medium': 'Award marks fairly based on correctness. Consider partial understanding.',
     'standard': 'Award marks fairly based on correctness. Consider partial understanding.',
     'strict': 'Evaluate with high standards. Require complete and accurate answers.',
     'very_strict': 'Apply maximum rigor. Expect excellence. No marks for incomplete answers.'
   };
 
-  return instructions[level] || instructions['standard'];
+  return instructions[level] || instructions['medium'];
 }
 
 /**
