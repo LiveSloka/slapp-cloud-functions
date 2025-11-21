@@ -84,7 +84,7 @@ gcloud services enable cloudtasks.googleapis.com --project=slapp-478005
 
 ```bash
 gcloud tasks queues create SlappResponses \
-  --location=asia-south1 \
+  --location=us-central1 \
   --max-dispatches-per-second=10 \
   --max-concurrent-dispatches=20 \
   --max-attempts=3 \
@@ -94,7 +94,7 @@ gcloud tasks queues create SlappResponses \
 **Verify queue was created:**
 ```bash
 gcloud tasks queues describe SlappResponses \
-  --location=asia-south1 \
+  --location=us-central1 \
   --project=slapp-478005
 ```
 
@@ -123,7 +123,7 @@ MONGODB_URI: 'mongodb+srv://username:password@cluster.mongodb.net/slapp_database
 
 # GCP Configuration
 GCP_PROJECT_ID: 'slapp-478005'
-GCP_LOCATION: 'asia-south1'
+GCP_LOCATION: 'us-central1'
 GCP_TASK_RESPONSES_QUEUE: 'SlappResponses'
 ```
 
@@ -169,10 +169,10 @@ After deployment, you'll see URLs for both functions:
 
 ```
 Function #1:
-https://asia-south1-slapp-478005.cloudfunctions.net/processEvaluation
+https://us-central1-slapp-478005.cloudfunctions.net/processEvaluation
 
 Function #2:
-https://asia-south1-slapp-478005.cloudfunctions.net/saveEvaluationResults
+https://us-central1-slapp-478005.cloudfunctions.net/saveEvaluationResults
 ```
 
 **Copy the first URL!** (processEvaluation)
@@ -185,7 +185,7 @@ https://asia-south1-slapp-478005.cloudfunctions.net/saveEvaluationResults
 
 ```env
 # Cloud Function URL - where to send evaluation requests
-CLOUD_FUNCTION_URL=https://asia-south1-slapp-478005.cloudfunctions.net/processEvaluation
+CLOUD_FUNCTION_URL=https://us-central1-slapp-478005.cloudfunctions.net/processEvaluation
 ```
 
 **Restart Backend:**
@@ -203,13 +203,13 @@ npm run dev
 ```bash
 # Check processEvaluation
 gcloud functions describe processEvaluation \
-  --region=asia-south1 \
+  --region=us-central1 \
   --project=slapp-478005 \
   --gen2
 
 # Check saveEvaluationResults
 gcloud functions describe saveEvaluationResults \
-  --region=asia-south1 \
+  --region=us-central1 \
   --project=slapp-478005 \
   --gen2
 ```
@@ -228,7 +228,7 @@ Both should show: `state: ACTIVE`
 **Watch Backend Logs:**
 ```
 📤 Using Google Cloud Tasks for async evaluation
-   Using Cloud Function handler: https://asia-south1-slapp-478005.cloudfunctions.net/processEvaluation
+   Using Cloud Function handler: https://us-central1-slapp-478005.cloudfunctions.net/processEvaluation
 ✅ Evaluation task queued successfully
 ```
 
@@ -245,7 +245,7 @@ Should show:
    Processing 5 students in batches of 2
 📨 ============ QUEUING RESPONSE ============
    Queue: SlappResponses
-   Target Function: https://asia-south1-slapp-478005.cloudfunctions.net/saveEvaluationResults
+   Target Function: https://us-central1-slapp-478005.cloudfunctions.net/saveEvaluationResults
 ✅ Response queued successfully
 ```
 
@@ -273,9 +273,9 @@ Should show:
 
 ### Cloud Console Dashboard
 
-**Function #1:** https://console.cloud.google.com/functions/details/asia-south1/processEvaluation?project=slapp-478005
+**Function #1:** https://console.cloud.google.com/functions/details/us-central1/processEvaluation?project=slapp-478005
 
-**Function #2:** https://console.cloud.google.com/functions/details/asia-south1/saveEvaluationResults?project=slapp-478005
+**Function #2:** https://console.cloud.google.com/functions/details/us-central1/saveEvaluationResults?project=slapp-478005
 
 ### View Metrics
 
@@ -296,7 +296,7 @@ npm run logs:save
 
 # Follow in real-time
 gcloud functions logs read processEvaluation \
-  --region=asia-south1 \
+  --region=us-central1 \
   --project=slapp-478005 \
   --follow
 ```
@@ -383,10 +383,10 @@ gcloud projects add-iam-policy-binding slapp-478005 \
 
 ```bash
 # List all queues
-gcloud tasks queues list --location=asia-south1 --project=slapp-478005
+gcloud tasks queues list --location=us-central1 --project=slapp-478005
 
 # Create if missing
-gcloud tasks queues create SlappResponses --location=asia-south1 --project=slapp-478005
+gcloud tasks queues create SlappResponses --location=us-central1 --project=slapp-478005
 ```
 
 ### Error: "Function timeout"

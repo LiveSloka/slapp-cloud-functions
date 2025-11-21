@@ -4,12 +4,17 @@
   "description": "Google Cloud Functions for Slapp evaluation processing with Gemini and MongoDB",
   "main": "index.js",
   "scripts": {
-    "deploy": "gcloud functions deploy processEvaluation --gen2 --runtime nodejs20 --trigger-http --allow-unauthenticated --region asia-south1 --memory 1GB --timeout 540s --env-vars-file=.env.yaml --project=slapp-478005",
-    "logs": "gcloud functions logs read processEvaluation --region=asia-south1 --project=slapp-478005 --limit=100",
-    "logs:follow": "gcloud functions logs read processEvaluation --region=asia-south1 --project=slapp-478005 --follow"
+    "deploy": "gcloud functions deploy processEvaluation --gen2 --runtime nodejs20 --trigger-http --allow-unauthenticated --region us-central1 --memory 1GB --timeout 540s --env-vars-file=.env.yaml --project=slapp-478005 --entry-point=processEvaluation",
+    "deploy:extraction": "gcloud functions deploy processMarkingSchemeExtraction --gen2 --runtime nodejs20 --trigger-http --allow-unauthenticated --region us-central1 --memory 1GB --timeout 540s --env-vars-file=.env.yaml --project=slapp-478005 --entry-point=processMarkingSchemeExtraction",
+    "deploy:simple-evaluation": "gcloud functions deploy processSimpleEvaluation --gen2 --runtime nodejs20 --trigger-http --allow-unauthenticated --region us-central1 --memory 1GB --timeout 540s --env-vars-file=.env.yaml --project=slapp-478005 --entry-point=processSimpleEvaluation",
+    "deploy:all": "npm run deploy && npm run deploy:extraction && npm run deploy:simple-evaluation",
+    "logs": "gcloud functions logs read processEvaluation --region=us-central1 --project=slapp-478005 --limit=100",
+    "logs:follow": "gcloud functions logs read processEvaluation --region=us-central1 --project=slapp-478005 --follow",
+    "logs:extraction": "gcloud functions logs read processMarkingSchemeExtraction --region=us-central1 --project=slapp-478005 --limit=100"
   },
   "dependencies": {
     "@google-cloud/functions-framework": "^3.3.0",
+    "@google-cloud/storage": "^7.17.3",
     "@google-cloud/tasks": "^6.2.1",
     "@google-cloud/vertexai": "^1.9.0",
     "mongoose": "^8.0.0"

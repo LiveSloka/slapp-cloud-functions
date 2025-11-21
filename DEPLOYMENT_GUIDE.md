@@ -44,7 +44,7 @@ Frontend → Backend → Cloud Tasks (Slapp queue)
 
 ```bash
 gcloud tasks queues create SlappResponses \
-  --location=asia-south1 \
+  --location=us-central1 \
   --max-dispatches-per-second=10 \
   --max-concurrent-dispatches=20 \
   --max-attempts=3
@@ -54,7 +54,7 @@ Or in Console:
 - Go to: https://console.cloud.google.com/cloudtasks?project=slapp-478005
 - Click "CREATE QUEUE"
 - Name: `SlappResponses`
-- Region: `asia-south1`
+- Region: `us-central1`
 - Click "CREATE"
 
 ---
@@ -78,7 +78,7 @@ Create `.env.yaml` file in `cloud-function/` folder:
 ```yaml
 GEMINI_API_KEY: 'AIzaSy...your-actual-key'
 GCP_PROJECT_ID: 'slapp-478005'
-GCP_LOCATION: 'asia-south1'
+GCP_LOCATION: 'us-central1'
 GCP_TASK_RESPONSES_QUEUE: 'SlappResponses'
 BACKEND_SERVICE_URL: 'https://your-backend-url.com'
 ```
@@ -97,7 +97,7 @@ cd cloud-function
 gcloud functions deploy processEvaluation \
   --gen2 \
   --runtime=nodejs20 \
-  --region=asia-south1 \
+  --region=us-central1 \
   --source=. \
   --entry-point=processEvaluation \
   --trigger-http \
@@ -111,7 +111,7 @@ gcloud functions deploy processEvaluation \
 **Parameters explained:**
 - `--gen2`: Use 2nd generation Cloud Functions
 - `--runtime=nodejs20`: Node.js 20
-- `--region=asia-south1`: Same as your queues
+- `--region=us-central1`: Same as your queues
 - `--trigger-http`: HTTP triggered (by Cloud Tasks)
 - `--allow-unauthenticated`: For Cloud Tasks to call it
 - `--memory=1GB`: Enough for Gemini processing
@@ -126,7 +126,7 @@ After deployment, you'll see:
 
 ```
 Deployed function: processEvaluation
-URL: https://asia-south1-slapp-478005.cloudfunctions.net/processEvaluation
+URL: https://us-central1-slapp-478005.cloudfunctions.net/processEvaluation
 ```
 
 **Copy this URL!** You'll need it for the next step.
@@ -141,7 +141,7 @@ Now update the `Slapp` queue to target the Cloud Function:
 
 ```bash
 gcloud tasks queues update Slapp \
-  --location=asia-south1 \
+  --location=us-central1 \
   --max-retry-duration=3600s \
   --min-backoff=10s \
   --max-backoff=300s
@@ -158,7 +158,7 @@ const url = `${serviceUrl}`;  // Cloud Function URL
 
 Add to Backend `.env`:
 ```env
-CLOUD_FUNCTION_URL=https://asia-south1-slapp-478005.cloudfunctions.net/processEvaluation
+CLOUD_FUNCTION_URL=https://us-central1-slapp-478005.cloudfunctions.net/processEvaluation
 ```
 
 ---
@@ -168,19 +168,19 @@ CLOUD_FUNCTION_URL=https://asia-south1-slapp-478005.cloudfunctions.net/processEv
 ### Test 1: Check Function is Deployed
 
 ```bash
-gcloud functions describe processEvaluation --region=asia-south1
+gcloud functions describe processEvaluation --region=us-central1
 ```
 
 Should show:
 ```
 state: ACTIVE
-url: https://asia-south1-slapp-478005.cloudfunctions.net/processEvaluation
+url: https://us-central1-slapp-478005.cloudfunctions.net/processEvaluation
 ```
 
 ### Test 2: Manual Test Call
 
 ```bash
-curl -X POST https://asia-south1-slapp-478005.cloudfunctions.net/processEvaluation \
+curl -X POST https://us-central1-slapp-478005.cloudfunctions.net/processEvaluation \
   -H "Content-Type: application/json" \
   -d '{
     "examId": "test123",
@@ -207,7 +207,7 @@ curl -X POST https://asia-south1-slapp-478005.cloudfunctions.net/processEvaluati
 **Cloud Function logs:**
 ```bash
 gcloud functions logs read processEvaluation \
-  --region=asia-south1 \
+  --region=us-central1 \
   --limit=50
 ```
 
@@ -229,20 +229,20 @@ Should show:
 ```bash
 # Real-time logs
 gcloud functions logs read processEvaluation \
-  --region=asia-south1 \
+  --region=us-central1 \
   --limit=100 \
   --follow
 
 # Filter errors
 gcloud functions logs read processEvaluation \
-  --region=asia-south1 \
+  --region=us-central1 \
   --filter="severity>=ERROR"
 ```
 
 ### Cloud Console
 
 **Function Dashboard:**
-https://console.cloud.google.com/functions/details/asia-south1/processEvaluation?project=slapp-478005
+https://console.cloud.google.com/functions/details/us-central1/processEvaluation?project=slapp-478005
 
 **View:**
 - Invocations count
@@ -262,7 +262,7 @@ cd cloud-function
 gcloud functions deploy processEvaluation \
   --gen2 \
   --runtime=nodejs20 \
-  --region=asia-south1 \
+  --region=us-central1 \
   --source=. \
   --entry-point=processEvaluation \
   --trigger-http \
@@ -309,7 +309,7 @@ npm run deploy
 gcloud functions deploy processEvaluation \
   --gen2 \
   --runtime=nodejs20 \
-  --region=asia-south1 \
+  --region=us-central1 \
   --source=. \
   --entry-point=processEvaluation \
   --trigger-http \
@@ -325,7 +325,7 @@ In `cloudTasksService.js`:
 ```javascript
 task.httpRequest.oidcToken = {
   serviceAccountEmail: 'slapp-715@slapp-478005.iam.gserviceaccount.com',
-  audience: 'https://asia-south1-slapp-478005.cloudfunctions.net/processEvaluation'
+  audience: 'https://us-central1-slapp-478005.cloudfunctions.net/processEvaluation'
 };
 ```
 
@@ -362,7 +362,7 @@ task.httpRequest.oidcToken = {
 |----------|----------|---------|-------------|
 | `GEMINI_API_KEY` | ✅ Yes | `AIzaSy...` | Your Gemini API key |
 | `GCP_PROJECT_ID` | ✅ Yes | `slapp-478005` | GCP project ID |
-| `GCP_LOCATION` | ✅ Yes | `asia-south1` | Queue region |
+| `GCP_LOCATION` | ✅ Yes | `us-central1` | Queue region |
 | `GCP_TASK_RESPONSES_QUEUE` | ✅ Yes | `SlappResponses` | Response queue name |
 | `BACKEND_SERVICE_URL` | ✅ Yes | `https://...` | Backend URL for responses |
 
@@ -397,6 +397,6 @@ Your Cloud Function is working when:
 
 **Need help?** Check logs first:
 ```bash
-gcloud functions logs read processEvaluation --region=asia-south1 --limit=100
+gcloud functions logs read processEvaluation --region=us-central1 --limit=100
 ```
 

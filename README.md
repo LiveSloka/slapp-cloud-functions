@@ -92,7 +92,7 @@ Edit `.env.yaml` with your values:
 GEMINI_API_KEY: 'AIzaSy...your-key'
 MONGODB_URI: 'mongodb+srv://user:pass@cluster.mongodb.net/slapp_database'
 GCP_PROJECT_ID: 'slapp-478005'
-GCP_LOCATION: 'asia-south1'
+GCP_LOCATION: 'us-central1'
 GCP_TASK_RESPONSES_QUEUE: 'SlappResponses'
 ```
 
@@ -114,14 +114,14 @@ This deploys:
 
 From deployment output, copy:
 ```
-https://asia-south1-slapp-478005.cloudfunctions.net/processEvaluation
+https://us-central1-slapp-478005.cloudfunctions.net/processEvaluation
 ```
 
 ### 4. Update Backend
 
 Add to Backend `.env`:
 ```env
-CLOUD_FUNCTION_URL=https://asia-south1-slapp-478005.cloudfunctions.net/processEvaluation
+CLOUD_FUNCTION_URL=https://us-central1-slapp-478005.cloudfunctions.net/processEvaluation
 ```
 
 Restart backend:
@@ -196,19 +196,19 @@ Create an exam in frontend and click "Evaluate" - everything works automatically
 ```bash
 # Real-time logs
 gcloud functions logs read processEvaluation \
-  --region=asia-south1 \
+  --region=us-central1 \
   --limit=100 \
   --follow
 
 # Filter by severity
 gcloud functions logs read processEvaluation \
-  --region=asia-south1 \
+  --region=us-central1 \
   --filter="severity>=ERROR"
 ```
 
 ### Cloud Console
 
-https://console.cloud.google.com/functions/details/asia-south1/processEvaluation?project=slapp-478005
+https://console.cloud.google.com/functions/details/us-central1/processEvaluation?project=slapp-478005
 
 ---
 
@@ -239,7 +239,7 @@ gcloud services enable cloudfunctions.googleapis.com
 ```bash
 # Grant invoker role
 gcloud functions add-iam-policy-binding processEvaluation \
-  --region=asia-south1 \
+  --region=us-central1 \
   --member="allUsers" \
   --role="roles/cloudfunctions.invoker"
 ```
