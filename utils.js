@@ -351,7 +351,12 @@ const markingSchemeSchema = new mongoose.Schema({
       description: String,
       questionText: String,
       questionType: String,
-      valuePoints: [String],
+      valuePoints: [{
+        step_id: { type: Number, required: true },
+        description: { type: String, required: true },
+        expected_ocr_match: { type: String, default: '' },
+        marks: { type: Number, default: 0.5 }
+      }],
       stepMarks: [Number],
       options: [{
         label: String,
@@ -428,6 +433,102 @@ const questionPaperSchema = new mongoose.Schema({
   softDelete: { type: Boolean, default: false, index: true }
 }, { timestamps: true });
 
+// AnswerSheetEvaluation schema
+const answerSheetEvaluationSchema = new mongoose.Schema({
+  tenantId: {
+    type: String,
+    required: true,
+    index: true
+  },
+  questionPaperUri: {
+    type: String,
+    required: true,
+    index: true
+  },
+  answerSheetUri: {
+    type: String,
+    required: true,
+    index: true
+  },
+  studentName: {
+    type: String,
+    default: 'Student'
+  },
+  evaluationData: {
+    questions: [{
+      questionNumber: {
+        type: String,
+        required: true
+      },
+      steps: [{
+        step_id: {
+          type: Number,
+          required: true
+        },
+        marksAwarded: {
+          type: Number,
+          default: 0
+        },
+        description: {
+          type: String,
+          default: ''
+        }
+      }],
+      totalMarks: {
+        type: Number,
+        default: 0
+      }
+    }],
+    grandTotal: {
+      type: Number,
+      default: 0
+    }
+  },
+  tokenUsage: {
+    promptTokens: {
+      type: Number,
+      default: 0
+    },
+    candidatesTokens: {
+      type: Number,
+      default: 0
+    },
+    totalTokens: {
+      type: Number,
+      default: 0
+    },
+    totalCost: {
+      type: Number,
+      default: 0
+    }
+  },
+  rawResponse: {
+    type: String,
+    default: ''
+  },
+  createdBy: {
+    type: String,
+    default: 'system'
+  },
+  updatedBy: {
+    type: String,
+    default: 'system'
+  },
+  softDelete: {
+    type: Boolean,
+    default: false,
+    index: true
+  }
+}, {
+  timestamps: true
+});
+
+// Indexes for faster queries
+answerSheetEvaluationSchema.index({ tenantId: 1, questionPaperUri: 1 });
+answerSheetEvaluationSchema.index({ tenantId: 1, answerSheetUri: 1 });
+answerSheetEvaluationSchema.index({ tenantId: 1, softDelete: 1 });
+answerSheetEvaluationSchema.index({ questionPaperUri: 1, answerSheetUri: 1 });
+
 // Mongoose models
 const Evaluation = mongoose.models.Evaluation || mongoose.model('Evaluation', evaluationSchema);
 const ExamResult = mongoose.models.ExamResult || mongoose.model('ExamResult', examResultSchema);
@@ -435,6 +536,7 @@ const Exam = mongoose.models.Exam || mongoose.model('Exam', examSchema);
 const ExamType = mongoose.models.ExamType || mongoose.model('ExamType', examTypeSchema);
 const MarkingScheme = mongoose.models.MarkingScheme || mongoose.model('MarkingScheme', markingSchemeSchema);
 const QuestionPaper = mongoose.models.QuestionPaper || mongoose.model('QuestionPaper', questionPaperSchema);
+const AnswerSheetEvaluation = mongoose.models.AnswerSheetEvaluation || mongoose.model('AnswerSheetEvaluation', answerSheetEvaluationSchema);
 
 // ============================================================================
 // MONGODB SAVE FUNCTIONS
@@ -555,6 +657,63 @@ async function saveQuestionPaperToMongoDB({ payload, questionPaperData, rawRespo
     return savedDoc;
   } catch (error) {
     console.error(`   ❌ Error saving question paper to MongoDB:`, error);
+    throw error;
+  }
+}
+
+/**
+ * Save answer sheet evaluation to MongoDB
+ */
+async function saveAnswerSheetEvaluationToMongoDB({ tenantId, questionPaperUri, answerSheetUri, studentName, evaluationData, tokenUsage, rawResponse, createdBy }) {
+  try {
+    if (!tenantId) {
+      throw new Error('Invalid payload: tenantId is required');
+    }
+    if (!questionPaperUri) {
+      throw new Error('Invalid payload: questionPaperUri is required');
+    }
+    if (!answerSheetUri) {
+      throw new Error('Invalid payload: answerSheetUri is required');
+    }
+
+    console.log(`   💾 Saving answer sheet evaluation to MongoDB: ${answerSheetUri}`);
+
+    // Check if evaluation already exists
+    const existingEvaluation = await AnswerSheetEvaluation.findOne({
+      tenantId: tenantId,
+      questionPaperUri: questionPaperUri,
+      answerSheetUri: answerSheetUri,
+      softDelete: false
+    });
+
+    const evaluationDoc = {
+      tenantId: tenantId,
+      questionPaperUri: questionPaperUri,
+      answerSheetUri: answerSheetUri,
+      studentName: studentName || 'Student',
+      evaluationData: evaluationData || { questions: [], grandTotal: 0 },
+      tokenUsage: tokenUsage || null,
+      rawResponse: rawResponse || '',
+      createdBy: createdBy || 'cloud-function',
+      updatedBy: createdBy || 'cloud-function',
+      softDelete: false
+    };
+
+    let savedDoc;
+    if (existingEvaluation) {
+      // Update existing document
+      Object.assign(existingEvaluation, evaluationDoc);
+      savedDoc = await existingEvaluation.save();
+      console.log(`   ✅ Answer sheet evaluation updated in MongoDB: ${savedDoc._id}`);
+    } else {
+      // Create new document
+      savedDoc = await AnswerSheetEvaluation.create(evaluationDoc);
+      console.log(`   ✅ Answer sheet evaluation saved to MongoDB: ${savedDoc._id}`);
+    }
+
+    return savedDoc;
+  } catch (error) {
+    console.error('   ❌ Error saving answer sheet evaluation to MongoDB:', error);
     throw error;
   }
 }
@@ -724,6 +883,10 @@ module.exports = {
   saveMarkingSchemeToMongoDB,
   saveQuestionPaperToMongoDB,
   saveResultsToMongoDB,
-  handleSaveError
+  saveAnswerSheetEvaluationToMongoDB,
+  handleSaveError,
+  
+  // Models
+  AnswerSheetEvaluation
 };
 

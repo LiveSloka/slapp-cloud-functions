@@ -128,6 +128,14 @@ You MUST consult the following documents from the Vertex AI Search datastore (al
     - If a question is worth N marks, create exactly 2N value points (each worth 0.5 marks)
     - Example: 3 marks question = 6 value points (6 × 0.5 = 3)
   - Question text (brief description)
+- **CRITICAL: Internal Choice Questions Handling:**
+  - If a question has internal choices (e.g., "Answer part (a) OR part (b)" or "Answer both (a) and (b)"), you MUST create SEPARATE question entries for EACH part
+  - For example, if Question 33 has parts (a) and (b), create TWO separate entries:
+    - One entry with questionNumber: "33 part a" (or "33(a)") with its own marks and valuePoints
+    - Another entry with questionNumber: "33 part b" (or "33(b)") with its own marks and valuePoints
+  - Each part of an internal choice question MUST have its own complete valuePoints array based on the marks allocated to that specific part
+  - Do NOT combine value points for multiple parts - each part gets its own separate value points
+  - Example: If Question 33 part (a) is worth 3 marks, create 6 value points (0.5 each) for part (a). If part (b) is worth 3 marks, create 6 separate value points (0.5 each) for part (b).
 - Group questions by sections
 - Calculate total marks for each section
 - Calculate overall total marks
@@ -196,6 +204,102 @@ Return ONLY valid JSON. NO markdown code blocks, NO explanations, NO text before
             }
           ],
           "stepMarks": [0.5, 0.5, 0.5, 0.5]
+        },
+        {
+          "questionNumber": "33 part a",
+          "questionText": "Question 33 part (a) description",
+          "questionType": "LA",
+          "marks": 3,
+          "options": [],
+          "correctOption": "",
+          "correctAnswer": "Concise correct answer for part (a)",
+          "valuePoints": [
+            {
+              "step_id": 1,
+              "description": "First step for part (a)",
+              "expected_ocr_match": "Key terms/numbers for part (a)",
+              "marks": 0.5
+            },
+            {
+              "step_id": 2,
+              "description": "Second step for part (a)",
+              "expected_ocr_match": "Expected terms/numbers",
+              "marks": 0.5
+            },
+            {
+              "step_id": 3,
+              "description": "Third step for part (a)",
+              "expected_ocr_match": "Expected terms/numbers",
+              "marks": 0.5
+            },
+            {
+              "step_id": 4,
+              "description": "Fourth step for part (a)",
+              "expected_ocr_match": "Expected terms/numbers",
+              "marks": 0.5
+            },
+            {
+              "step_id": 5,
+              "description": "Fifth step for part (a)",
+              "expected_ocr_match": "Expected terms/numbers",
+              "marks": 0.5
+            },
+            {
+              "step_id": 6,
+              "description": "Final step for part (a)",
+              "expected_ocr_match": "Expected terms/numbers",
+              "marks": 0.5
+            }
+          ],
+          "stepMarks": [0.5, 0.5, 0.5, 0.5, 0.5, 0.5]
+        },
+        {
+          "questionNumber": "33 part b",
+          "questionText": "Question 33 part (b) description",
+          "questionType": "LA",
+          "marks": 3,
+          "options": [],
+          "correctOption": "",
+          "correctAnswer": "Concise correct answer for part (b)",
+          "valuePoints": [
+            {
+              "step_id": 1,
+              "description": "First step for part (b)",
+              "expected_ocr_match": "Key terms/numbers for part (b)",
+              "marks": 0.5
+            },
+            {
+              "step_id": 2,
+              "description": "Second step for part (b)",
+              "expected_ocr_match": "Expected terms/numbers",
+              "marks": 0.5
+            },
+            {
+              "step_id": 3,
+              "description": "Third step for part (b)",
+              "expected_ocr_match": "Expected terms/numbers",
+              "marks": 0.5
+            },
+            {
+              "step_id": 4,
+              "description": "Fourth step for part (b)",
+              "expected_ocr_match": "Expected terms/numbers",
+              "marks": 0.5
+            },
+            {
+              "step_id": 5,
+              "description": "Fifth step for part (b)",
+              "expected_ocr_match": "Expected terms/numbers",
+              "marks": 0.5
+            },
+            {
+              "step_id": 6,
+              "description": "Final step for part (b)",
+              "expected_ocr_match": "Expected terms/numbers",
+              "marks": 0.5
+            }
+          ],
+          "stepMarks": [0.5, 0.5, 0.5, 0.5, 0.5, 0.5]
         }
       ]
     }
