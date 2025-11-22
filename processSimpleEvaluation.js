@@ -9,7 +9,8 @@ const {
   vertexAI,
   retryWithBackoff,
   calculateTokenCost,
-  connectToDatabase
+  connectToDatabase,
+  saveAnswerSheetEvaluationToMongoDB
 } = require('./utils');
 
 // ============================================================================
@@ -55,6 +56,35 @@ exports.processSimpleEvaluation = async (req, res) => {
     );
 
     console.log('✅ Evaluation completed successfully');
+    
+    // Save evaluation results to database
+    // Note: questionPaperUri needs to be extracted from markingSchemeTextUri or passed separately
+    // For now, we'll try to extract it from the payload or use empty string
+    try {
+      // Try to extract questionPaperUri from payload or derive it
+      let questionPaperUri = payload.questionPaperUri;
+      
+      // If not provided, we can't save it properly, but still try to save with empty string
+      // The backend controller should pass questionPaperUri in the payload
+      if (!questionPaperUri) {
+        console.log('   ⚠️  questionPaperUri not provided in payload, saving with empty string');
+      }
+      
+      const savedEvaluation = await saveAnswerSheetEvaluationToMongoDB({
+        tenantId: payload.tenantId,
+        questionPaperUri: questionPaperUri || '',
+        answerSheetUri: payload.answerSheetUri,
+        studentName: payload.studentName || 'Student',
+        evaluationData: result.evaluationData,
+        tokenUsage: result.tokenUsage,
+        rawResponse: result.rawResponse,
+        createdBy: payload.createdBy || 'system'
+      });
+      console.log(`   ✅ Evaluation saved to database: ${savedEvaluation._id}`);
+    } catch (saveError) {
+      console.error('   ⚠️  Failed to save evaluation to database:', saveError.message);
+      // Don't fail the request if save fails, just log the error
+    }
     
     res.status(200).json({
       success: true,
