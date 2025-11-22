@@ -627,6 +627,7 @@ async function saveQuestionPaperToMongoDB({ payload, questionPaperData, rawRespo
       language: payload.language || 'english',
       sections: questionPaperData?.sections || [],
       rawResponse: rawResponse || '',
+      markingSchemeTextUri: markingSchemeJsonUri, // Set both URIs to the same value (TXT file)
       markingSchemeJsonUri: markingSchemeJsonUri,
       status: status || 'draft',
       createdBy: createdBy || payload.createdBy || 'cloud-function',
@@ -638,11 +639,16 @@ async function saveQuestionPaperToMongoDB({ payload, questionPaperData, rawRespo
     if (existingQuestionPaper) {
       // Update existing document
       Object.assign(existingQuestionPaper, questionPaperDoc);
+      // Ensure markingSchemeTextUri is set if markingSchemeJsonUri exists
+      if (markingSchemeJsonUri && !existingQuestionPaper.markingSchemeTextUri) {
+        existingQuestionPaper.markingSchemeTextUri = markingSchemeJsonUri;
+      }
       savedDoc = await existingQuestionPaper.save();
       console.log(`   ✅ Question paper updated in MongoDB: ${savedDoc._id}`);
       console.log(`   📊 Sections: ${savedDoc.sections?.length || 0}, Total Questions: ${savedDoc.sections?.reduce((sum, s) => sum + (s.questions?.length || 0), 0) || 0}`);
       if (markingSchemeJsonUri) {
-        console.log(`   📁 JSON URI: ${markingSchemeJsonUri}`);
+        console.log(`   📁 Marking Scheme Text URI: ${savedDoc.markingSchemeTextUri || markingSchemeJsonUri}`);
+        console.log(`   📁 Marking Scheme JSON URI: ${markingSchemeJsonUri}`);
       }
     } else {
       // Create new document

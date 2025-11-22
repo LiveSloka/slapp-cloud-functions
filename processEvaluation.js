@@ -482,9 +482,19 @@ Two files have been provided:
 - Use the marking scheme as the STRICT and ONLY reference for awarding marks
 - Extract question details (question numbers, sections, question text, question types) from the marking scheme
 - Compare the student's answers (from the answer sheet PDF) against the marking scheme
-- Award marks ONLY for value points that match the marking scheme
+- **CRITICAL: STEP-BY-STEP EVALUATION REQUIRED**
+  - For each question in the marking scheme, you MUST evaluate EACH value point/step individually
+  - For each value point (step) in the marking scheme:
+    1. Check if the student ATTEMPTED this step (look for the step's content in their answer)
+    2. Check if the step is CORRECT by verifying:
+       - The student's answer contains the expected concepts/key terms from expected_ocr_match field
+       - The step logic/calculation is correct
+       - The step follows the description requirements
+    3. **IF STEP IS CORRECT:** Award the full marks for that step (marks value from value point, typically 0.5)
+    4. **IF STEP IS WRONG OR MISSING:** Award 0 marks for that step
+  - Sum up all the marks from correctly answered steps to get the total marks for the question
+  - Do NOT award marks for incorrect or missing steps
 - For MCQ questions: Award full marks ONLY if the student selected the correct option specified in the marking scheme
-- For descriptive questions: Award marks based on how many value points from the marking scheme the student's answer addresses
 - Use the step marks distribution exactly as specified in the marking scheme
 - Do NOT award marks for content not in the marking scheme, even if it seems correct
 - Do NOT exceed the maximum marks specified for each question in the marking scheme
@@ -515,12 +525,16 @@ Two files have been provided:
 - Always prioritize the provided marking scheme, but use the datastore for supplementary reference when needed
 
 **Evaluation Process:**
-1. Read the marking scheme text file completely - it contains ALL question details including question numbers, question text, sections, question types, maximum marks, value points, step marks, and correct answers
+1. Read the marking scheme text file completely - it contains ALL question details including question numbers, question text, sections, question types, maximum marks, value points (with step_id, description, expected_ocr_match, marks), step marks, and correct answers
 2. Read the student's answer sheet PDF
 3. For each question listed in the marking scheme, identify the corresponding answer in the student's answer sheet
-4. Evaluate the student's answer against the marking scheme's value points and step marks
-5. Award marks strictly according to the marking scheme's value points and step marks
-6. Document which value points were matched and any deductions made
+4. **For each question, evaluate EACH value point/step individually:**
+   - Check if the student attempted the step
+   - Verify correctness using expected_ocr_match and description fields from the marking scheme
+   - Award marks ONLY for correct steps
+   - Award 0 marks for incorrect or missing steps
+5. Calculate total marks for each question = Sum of marks from all correctly answered steps
+6. Document which value points/steps were correct (and awarded marks) and which were wrong/missing (and why marks were deducted)
 
 **Output Format:**
 
